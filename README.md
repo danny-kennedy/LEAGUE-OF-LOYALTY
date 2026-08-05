@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # League of Loyalty — QC Competition Dashboard
 
 A gamified, production-ready Streamlit dashboard for QC / review competitions. It reads a
@@ -167,3 +168,6 @@ For an internal rollout you can self-host instead:
 | Numbers look stale | The refresh button is paused by design; reload the page or update the CSV and redeploy. |
 | Deploy fails on Cloud | Ensure `requirements.txt` is in the repo root and main file is `app.py`. |
 | Theme not applied online | Commit `.streamlit/config.toml` to the repo. |
+=======
+# LEAGUE-OF-LOYALTY
+>>>>>>> 4e97a6c84cac6794013aec44730b58913f5da3c0

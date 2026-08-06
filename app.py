@@ -12,8 +12,10 @@ Run:  streamlit run app.py
 """
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 import logic
@@ -21,9 +23,11 @@ import avatars
 from logic import BANDS, BAND_META, BUCKETS, BUCKET_COLOR
 
 DATA_PATH = Path(__file__).parent / "review_log.csv"
+PROFILE_PATH = Path(__file__).parent / "player_profiles.csv"
 
 GOLD, PARCHMENT, MUTED, BG_PANEL = "#C8AA6E", "#F0E6D2", "#A09B8C", "#102A43"
 DASH = "\u2014"
+POD_COLOR = {"CP": "#59C3FF", "NCP": "#FF9F1C"}   # distinct name colours per pod
 BAND_COLORS = {b: BAND_META[b]["color"] for b in BANDS}
 SEQ = [GOLD, "#5B8DEF", "#4CC9B0", "#B57BE0", "#E8734A", "#F4CE00"]
 BAR_SEQ = ["#F4CE00", "#59C3FF", "#FF6B6B", "#3FA34D", "#9B5DE5",
@@ -35,6 +39,14 @@ def _dark(hex_color: str, f: float = 0.66) -> str:
     r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
     return f"#{int(r*f):02x}{int(g*f):02x}{int(b*f):02x}"
 
+
+def _rgba(hex_color: str, a: float = 0.16) -> str:
+    """Plotly properties (e.g. fillcolor) reject 8-digit hex; emit rgba() instead."""
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{a})"
+
+
 st.set_page_config(page_title="QC Competition \u2014 League of Loyalty",
                    page_icon="\U0001F3C6", layout="wide",
                    initial_sidebar_state="expanded")
@@ -45,6 +57,12 @@ st.set_page_config(page_title="QC Competition \u2014 League of Loyalty",
 def get_data() -> pd.DataFrame:
     """Load + prepare the CSV. Cached so filters/interactions never re-read disk."""
     return logic.load_and_prepare(str(DATA_PATH))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_profiles() -> pd.DataFrame:
+    """Editable roster (roles + avatars). Cached; cleared by the Refresh button."""
+    return logic.load_profiles(str(PROFILE_PATH))
 
 
 @st.cache_data(show_spinner=False)
@@ -62,8 +80,8 @@ def style_fig(fig, height=320, legend=True):
     fig.update_layout(
         template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)", font=dict(color=PARCHMENT, size=13),
-        margin=dict(l=10, r=10, t=44, b=10), height=height,
-        title_font=dict(color=PARCHMENT, size=15),
+        margin=dict(l=10, r=10, t=30, b=10), height=height,
+        title=dict(text="", font=dict(color=PARCHMENT, size=15)),  # empty text, never 'undefined'
         showlegend=legend, legend=dict(bgcolor="rgba(0,0,0,0)"))
     fig.update_xaxes(gridcolor="#1e3a5f", zerolinecolor="#1e3a5f")
     fig.update_yaxes(gridcolor="#1e3a5f", zerolinecolor="#1e3a5f")
@@ -124,15 +142,49 @@ def no_data(msg="No data available for the current selection."):
 
 # ---------------------------------------------------------------- load + sidebar
 df = get_data()
+PROFILE = get_profiles()
+PMAP = logic.profile_map(PROFILE)
 pods = logic.list_pods(df)
 months, weeks, quarters = logic.list_months(df), logic.list_weeks(df), logic.list_quarters(df)
 campaigns_all, types_all = logic.list_campaigns(df), logic.list_types(df)
-participants_all = logic.list_participants(df)
+
+
+# ---- per-player avatar / role / pod-colour helpers --------------------------
+def player_meta(pod, name):
+    m = PMAP.get((str(pod).upper(), str(name).upper()))
+    if m:
+        return m
+    arch = avatars.list_archetypes()[avatars._seed(f"{pod}|{name}") % len(avatars.list_archetypes())]
+    return {"role": "Owner", "gender": "M", "archetype": arch}
+
+
+def av_uri(pod, name, scale=6):
+    m = player_meta(pod, name)
+    return avatars.avatar_data_uri(m["archetype"], m["gender"], f"{pod}|{name}", scale)
+
+
+def av_name(pod, name):
+    m = player_meta(pod, name)
+    return avatars.archetype_display(m["archetype"], m["gender"])
+
+
+def role_of(pod, name):
+    return player_meta(pod, name)["role"]
+
+
+def pod_color(pod):
+    return POD_COLOR.get(str(pod).upper(), GOLD)
+
+
+def name_html(pod, name, size="1rem"):
+    return (f'<span style="color:{pod_color(pod)};font:800 {size} system-ui;">{name}</span>'
+            f'<span style="color:{MUTED};font-size:0.62rem;"> {pod}</span>')
+
 
 with st.sidebar:
     st.markdown(f'<div style="font-weight:800;color:{GOLD};font-size:1.1rem;">'
                 f'\U0001F3C6 League of Loyalty</div>', unsafe_allow_html=True)
-    st.caption("QC competition dashboard")
+    st.caption("One Goal | One Team | Zero Error Delivery")
     st.divider()
 
     page = st.radio("Go to", [
@@ -143,51 +195,48 @@ with st.sidebar:
         label_visibility="collapsed")
 
     st.divider()
-    # POD is the highest-level filter: it selects the base dataset before anything else.
     pod_options = ["All PODs"] + pods
     sel_pod = st.selectbox("\U0001F3E2 POD (team)", pod_options, index=0,
                            help="Highest-level filter. Everything below applies within "
                                 "the selected POD.")
+    POD = None if sel_pod == "All PODs" else sel_pod
 
     st.markdown("**Filters**")
-    sel_month = st.selectbox("Month", months, index=len(months) - 1,
-                             help="Drives the Monthly competition and monthly KPIs.")
-    sel_week = st.selectbox("Week", weeks, index=len(weeks) - 1,
-                            help="A week = the Monday-commencing period. Drives Weekly.")
-    sel_quarter = st.selectbox("Quarter", quarters, index=len(quarters) - 1,
-                               help="Drives the Quarterly competition.")
+    sel_month = st.selectbox("Month (Season)", months, index=len(months) - 1)
+    sel_week = st.selectbox("Week", weeks, index=len(weeks) - 1)
+    sel_quarter = st.selectbox("Quarter", quarters, index=len(quarters) - 1)
     sel_campaign = st.multiselect("Campaign", campaigns_all, help="Empty = all campaigns.")
     sel_type = st.multiselect("Type", types_all, help="Empty = all types.")
     sel_bucket = st.multiselect("Error Bucket", BUCKETS, help="Empty = all buckets.")
-    sel_participant = st.selectbox("Participant", participants_all,
-                                   help="Used on Participant Analytics.")
-    top_n = st.slider("Top N", 3, 25, 10, help="Rows shown per leaderboard.")
 
-    st.divider()
-    st.markdown("**Bands**")
-    for b in BANDS:
-        st.markdown(band_badge(b), unsafe_allow_html=True)
+    _pp = PROFILE if POD is None else PROFILE[PROFILE["POD"] == POD]
+    _pp = _pp.sort_values(["POD", "Name"])
+    player_options = [f"{r.Name} \u00b7 {r.POD}" for r in _pp.itertuples(index=False)]
+    sel_player = st.selectbox("Player", player_options,
+                              help="Used on Participant Analytics.") if player_options else None
 
     st.divider()
     st.caption(f"Data updated: {df['Date'].max():%d %b %Y}")
-    # Refresh is intentionally DISABLED for now (kept in place, same look).
-    # To restore later: on click call `st.cache_data.clear(); st.rerun()`.
-    st.button("\U0001F504 Refresh data", use_container_width=True)
+    if st.button("\U0001F504 Refresh data", use_container_width=True,
+                 help="Reload player_profiles.csv and review_log.csv from disk."):
+        st.cache_data.clear()
+        st.rerun()
 
 
 # ---- single filtering pipeline: POD -> campaign/type/bucket (period per page) --
-POD = None if sel_pod == "All PODs" else sel_pod
 CAMPS = tuple(sorted(sel_campaign))
 TYPES = tuple(sorted(sel_type))
 BUCKS = tuple(sorted(sel_bucket))
 fdf = logic.filter_data(df, POD, CAMPS, TYPES, BUCKS)  # base frame every page consumes
 POD_LABEL = sel_pod
+if sel_player:
+    sel_player_name, sel_player_pod = [s.strip() for s in sel_player.split("\u00b7")]
+else:
+    sel_player_name, sel_player_pod = None, None
 
 
-SEASON_NAMES = ["Platinum", "Gold", "Diamond"]
-SEASON_COLOR = {"Platinum": "#7FB2D9", "Gold": "#E8C35A", "Diamond": "#7BE0D0"}
-LEAGUE_NAMES = {1: "Vanguard League", 2: "Tempest League",
-                3: "Ascension League", 4: "Apex League"}
+SEASON_NAMES = ["Dawn", "Eclipse", "Ascension"]
+SEASON_COLOR = {"Dawn": "#F4A259", "Eclipse": "#7B6CF6", "Ascension": "#4CC9B0"}
 MINOR_ERRORS = [
     "Treatment / offer label", "Wrong offer IDs", "Wrong segment cutoffs",
     "Incorrect compensation", "SKU table segments", "Not pasting output in comments",
@@ -230,45 +279,60 @@ def _scoring_table_html():
 def _error_catalog_html(title, color, items):
     lis = "".join(f'<li style="margin:3px 0;color:{PARCHMENT};font:600 0.8rem system-ui;">{x}</li>'
                   for x in items)
-    return (f'<div style="border:1px solid {color}55;background:{color}12;border-radius:12px;'
-            f'padding:10px 12px;height:100%;">'
+    return (f'<div style="flex:1 1 260px;min-width:230px;box-sizing:border-box;'
+            f'border:1px solid {color}66;background:{color}14;border-radius:12px;padding:10px 12px;">'
             f'<div style="color:{color};font:800 0.85rem system-ui;letter-spacing:0.5px;'
             f'margin-bottom:4px;">{title}</div>'
             f'<ul style="margin:0;padding-left:18px;">{lis}</ul></div>')
 
 
+def _roster_card(pod, name, role=None):
+    m = player_meta(pod, name)
+    c = pod_color(pod)
+    aname = avatars.archetype_display(m["archetype"], m["gender"])
+    role_line = (f'<div style="color:{MUTED};font:600 0.6rem system-ui;">{role}</div>'
+                 if role else "")
+    return (f'<div style="width:98px;text-align:center;background:#0b1b2c;border:1px solid {c}44;'
+            f'border-radius:10px;padding:8px 4px;">'
+            f'<img src="{av_uri(pod, name)}" width="46" style="image-rendering:pixelated;'
+            f'filter:drop-shadow(0 2px 2px #0007);"/>'
+            f'<div style="color:{c};font:800 0.82rem system-ui;">{name}</div>'
+            f'<div style="color:{MUTED};font-size:0.58rem;">POD {pod}</div>'
+            f'{role_line}'
+            f'<div style="color:{PARCHMENT};font:700 0.66rem system-ui;">{aname}</div></div>')
+
+
+def roster_gallery(profiles, show_role=True):
+    blocks = []
+    for pod in sorted(profiles["POD"].unique()):
+        sub = profiles[profiles["POD"] == pod].sort_values(["Role", "Name"])
+        cards = "".join(_roster_card(pod, r.Name, r.Role if show_role else None)
+                        for r in sub.itertuples(index=False))
+        blocks.append(
+            f'<div style="margin:10px 0 4px;color:{pod_color(pod)};font:800 0.82rem system-ui;'
+            f'letter-spacing:1px;">\u25B8 POD {pod} \u00b7 {len(sub)} players</div>'
+            f'<div style="display:flex;flex-wrap:wrap;gap:8px;">{cards}</div>')
+    return "".join(blocks)
+
+
 def page_about():
     st.markdown("### \U0001F4D8 About Competition")
-    st.caption("How the game works \u2014 seasons, leagues, and how points are scored.")
+    st.caption("How the game works \u2014 seasons and how points are scored.")
 
-    # ---- Seasons & Leagues ----
-    a, b = st.columns(2)
-    with a, st.container(border=True):
+    with st.container(border=True):
         st.markdown("#### \U0001F5D3\uFE0F Seasons")
         st.markdown("**1 month = 1 Season.** There are **3 seasons**:")
         chips = "".join(
             f'<span style="display:inline-block;background:{SEASON_COLOR[s]}22;'
             f'color:{SEASON_COLOR[s]};border:1px solid {SEASON_COLOR[s]}88;border-radius:20px;'
-            f'padding:4px 14px;margin:3px 6px 3px 0;font:800 0.85rem system-ui;">{s}</span>'
+            f'padding:4px 16px;margin:3px 8px 3px 0;font:800 0.9rem system-ui;">{s}</span>'
             for s in SEASON_NAMES)
         st.markdown(chips, unsafe_allow_html=True)
         mapping = ", ".join(f"{m} = {SEASON_NAMES[i]}"
-                            for i, m in enumerate(logic.list_months(df)[:3]))
+                            for i, m in enumerate(logic.list_months(df)[:len(SEASON_NAMES)]))
         if mapping:
-            st.caption("This dataset: " + mapping)
-    with b, st.container(border=True):
-        st.markdown("#### \U0001F3C5 Leagues")
-        st.markdown("**1 quarter = 1 League.** There are **4 leagues** across the year:")
-        chips = "".join(
-            f'<span style="display:inline-block;background:{GOLD}1e;color:{GOLD};'
-            f'border:1px solid {GOLD}77;border-radius:20px;padding:4px 14px;'
-            f'margin:3px 6px 3px 0;font:800 0.85rem system-ui;">Q{q} \u00b7 {n}</span>'
-            for q, n in LEAGUE_NAMES.items())
-        st.markdown(chips, unsafe_allow_html=True)
-        st.caption("Each league aggregates that quarter's results into one fair ranking.")
+            st.caption("This dataset maps to: " + mapping)
 
-    st.divider()
-    # ---- The three competitions ----
     st.markdown("#### \U0001F3AE The three competitions")
     c1, c2, c3 = st.columns(3)
     with c1, st.container(border=True):
@@ -278,31 +342,37 @@ def page_about():
     with c2, st.container(border=True):
         st.markdown("**\U0001F4C8 Monthly (Season)**")
         st.markdown("- Compared **within your role** first.\n- Band **averages** \u2192 "
-                    "**Z-scores** \u2192 a **0\u2013100** score.\n- Overall rank from "
-                    "`z_score_points` (fair across roles).")
+                    "**Z-scores** \u2192 a **0\u2013100** score.\n- Overall rank from the "
+                    "fair score, not raw points.")
     with c3, st.container(border=True):
-        st.markdown("**\U0001F3C5 Quarterly (League)**")
+        st.markdown("**\U0001F5D3\uFE0F Quarterly**")
         st.markdown("- **Same fair method** as Monthly.\n- Uses **quarter-level** "
-                    "aggregated data.\n- Rewards consistency all league long.")
+                    "aggregated data.\n- Rewards consistency across the whole quarter.")
 
     st.divider()
-    # ---- Defect Bucketing Criteria ----
     st.markdown("#### \U0001F3AF Defect Bucketing Criteria")
     st.caption("A perfect deliverable rewards the Owner. Catching a real error rewards the "
                "peer who caught it \u2014 the higher the bucket, the more it's worth.")
-    st.markdown(_scoring_table_html(), unsafe_allow_html=True)
-    st.markdown("")
-    e1, e2, e3 = st.columns(3)
-    with e1:
-        st.markdown(_error_catalog_html("\U0001F7E3 Brief Interpretation (highest)",
-                    BUCKET_COLOR["Brief Interpretation Error"], BRIEF_ERRORS),
-                    unsafe_allow_html=True)
-    with e2:
-        st.markdown(_error_catalog_html("\U0001F7E0 Major Errors",
-                    BUCKET_COLOR["Major Error"], MAJOR_ERRORS), unsafe_allow_html=True)
-    with e3:
-        st.markdown(_error_catalog_html("\U0001F7E1 Minor Errors",
-                    BUCKET_COLOR["Minor Error"], MINOR_ERRORS), unsafe_allow_html=True)
+    catalogs = (
+        _error_catalog_html("\U0001F7E3 Brief Interpretation (highest)",
+                            BUCKET_COLOR["Brief Interpretation Error"], BRIEF_ERRORS)
+        + _error_catalog_html("\U0001F7E0 Major Errors",
+                              BUCKET_COLOR["Major Error"], MAJOR_ERRORS)
+        + _error_catalog_html("\U0001F7E1 Minor Errors",
+                              BUCKET_COLOR["Minor Error"], MINOR_ERRORS))
+    # One dark panel behind everything so the light text stays readable in BOTH themes
+    # (dark theme is unchanged — the navy panel matches the roster cards on this page).
+    st.markdown(
+        '<div style="background:#0b1b2c;border:1px solid #ffffff14;border-radius:14px;'
+        'padding:14px 16px;">' + _scoring_table_html()
+        + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:14px;">'
+        + catalogs + '</div></div>', unsafe_allow_html=True)
+
+    st.divider()
+    st.markdown("#### \U0001F579\uFE0F The Roster")
+    st.caption("Every player, their role, and their unique game character "
+               "(from player_profiles.csv \u2014 edit a row to change a role or avatar).")
+    st.markdown(roster_gallery(PROFILE, show_role=True), unsafe_allow_html=True)
 
 
 # ============================================================= OVERVIEW (arcade)
@@ -328,14 +398,14 @@ def _overview_header(pod_label, week_label, reviews, players, points, errors):
 
 
 def _stage(players):
-    backdrop = avatars.backdrop_data_uri()
+    backdrop = avatars.backdrop_data_uri("arcade")
     maxp = max(int(players["points"].max()), 1)
     cols = []
     for _, r in players.iterrows():
-        name, pts, rank = r["name"], int(r["points"]), int(r["rank"])
+        pod, name, pts, rank = r["POD"], r["name"], int(r["points"]), int(r["rank"])
         color = BAR_SEQ[(rank - 1) % len(BAR_SEQ)]
         h = int(30 + max(pts, 0) / maxp * 175)
-        av = avatars.avatar_data_uri(name)
+        av = av_uri(pod, name)
         plate = (medal(rank) + " " if rank <= 3 else "") + name
         cols.append(
             f'<div style="display:flex;flex-direction:column;align-items:center;'
@@ -349,7 +419,7 @@ def _stage(players):
             f'justify-content:center;"><div style="color:#ffffffdd;font:800 11px system-ui;'
             f'margin-top:4px;">{rank}</div></div>'
             f'<div style="margin-top:5px;background:#0b1b2cd9;border:1px solid {color}99;'
-            f'border-radius:8px;padding:2px 7px;color:{PARCHMENT};font:700 11px system-ui;'
+            f'border-radius:8px;padding:2px 7px;color:{pod_color(pod)};font:800 11px system-ui;'
             f'white-space:nowrap;max-width:82px;overflow:hidden;text-overflow:ellipsis;">'
             f'{plate}</div></div>')
     return (
@@ -362,11 +432,16 @@ def _stage(players):
         f'{"".join(cols)}</div></div>')
 
 
-def _champ_box(category, color, pair, band):
-    if pair and pair[0]:
-        name, pts_s, av = pair[0], str(pair[1]), avatars.avatar_data_uri(pair[0])
+def _champ_box(category, color, entry, band):
+    """entry = (pod, name, points) or None."""
+    if entry and entry[1]:
+        pod, name, pts_s = entry[0], entry[1], str(entry[2])
+        av = av_uri(pod, name)
+        name_c = pod_color(pod)
+        pod_tag = f'<span style="color:{MUTED};font-size:0.6rem;"> {pod}</span>'
     else:
-        name, pts_s, av = DASH, DASH, avatars.avatar_data_uri("?")
+        pod, name, pts_s, name_c, pod_tag = "", DASH, DASH, PARCHMENT, ""
+        av = avatars.avatar_data_uri("knight", "M", "?")
     return (
         f'<div style="border:1px solid {color}66;'
         f'background:linear-gradient(180deg,{color}22,{color}0c);border-radius:12px;'
@@ -375,8 +450,8 @@ def _champ_box(category, color, pair, band):
         f'filter:drop-shadow(0 2px 2px #0007);"/>'
         f'<div style="flex:1;min-width:0;">'
         f'<div style="color:{color};font:800 0.62rem system-ui;letter-spacing:1px;">{category}</div>'
-        f'<div style="color:{PARCHMENT};font:800 1rem system-ui;line-height:1.15;'
-        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{name}</div>'
+        f'<div style="font:800 1rem system-ui;line-height:1.15;color:{name_c};'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{name}{pod_tag}</div>'
         f'<div style="color:{MUTED};font:600 0.72rem system-ui;">{band}</div></div>'
         f'<div style="text-align:right;"><div style="color:{color};font:800 1.15rem system-ui;">'
         f'{pts_s}</div><div style="color:#8aa0b4;font:700 0.55rem system-ui;letter-spacing:1px;">'
@@ -403,7 +478,8 @@ def page_overview():
 
     def band_top(b):
         s = wb[wb["band"] == b].sort_values("rank")
-        return (s.iloc[0]["name"], int(s.iloc[0]["points"])) if not s.empty else None
+        return (s.iloc[0]["POD"], s.iloc[0]["name"], int(s.iloc[0]["points"])) \
+            if not s.empty else None
 
     mc = logic.monthly_champion(mo_df)
     ql = logic.fair_leaderboard(q_df)
@@ -425,19 +501,49 @@ def page_overview():
             + _champ_box("WEEKLY TOP PEER 1", "#C8AA6E", band_top("Peer 1"), "Peer 1")
             + _champ_box("WEEKLY TOP PEER 2", "#4CC9B0", band_top("Peer 2"), "Peer 2")
             + _champ_box("MONTHLY TOP PERSON", "#9B5DE5",
-                         (mc["name"], mc["points"]) if mc else None,
+                         (mc["pod"], mc["name"], mc["points"]) if mc else None,
                          mc["band"] if mc else "\u2014")
             + _champ_box("QUARTERLY TOP PERSON", "#FF7B54",
-                         (qtop["name"], int(qtop["points"])) if qtop is not None else None,
+                         (qtop["POD"], qtop["name"], int(qtop["points"]))
+                         if qtop is not None else None,
                          qtop["band"] if qtop is not None else "\u2014"))
         st.markdown(html, unsafe_allow_html=True)
 
 
-# ============================================================= WEEKLY
+# ============================================================= WEEKLY (arena lanes)
+def _weekly_lane(band, sub):
+    backdrop = avatars.backdrop_data_uri("stadium")
+    bc = BAND_COLORS[band]
+    emoji = BAND_META[band]["emoji"]
+    cards = []
+    for _, r in sub.iterrows():
+        pod, name, pts, rank = r["POD"], r["name"], int(r["points"]), int(r["rank"])
+        cards.append(
+            f'<div style="min-width:74px;text-align:center;flex:0 0 auto;">'
+            f'<div style="color:#fff;font:800 12px system-ui;text-shadow:0 1px 2px #000;">{medal(rank)}</div>'
+            f'<img src="{av_uri(pod, name)}" width="44" style="image-rendering:pixelated;'
+            f'filter:drop-shadow(0 2px 2px #0007);"/>'
+            f'<div style="color:{pod_color(pod)};font:800 12px system-ui;white-space:nowrap;">{name}</div>'
+            f'<div style="margin-top:2px;display:inline-block;background:{bc}26;border:1px solid {bc}88;'
+            f'color:{bc};font:800 11px system-ui;border-radius:10px;padding:1px 8px;">{pts}</div></div>')
+    row = "".join(cards) or '<div style="color:#eee;padding:14px;">No players this week</div>'
+    return (
+        f'<div style="position:relative;border-radius:12px;overflow:hidden;border:1px solid {bc}55;'
+        f'margin-bottom:10px;background-image:url({backdrop});background-size:cover;'
+        f'background-position:center;image-rendering:pixelated;">'
+        f'<div style="background:linear-gradient(90deg,#0A1428e6,#0A142855);padding:8px 12px;">'
+        f'<span style="color:{bc};font:800 0.85rem system-ui;letter-spacing:1px;">'
+        f'{emoji} {band.upper()} LEADERBOARD</span>'
+        f'<span style="color:{MUTED};font-size:0.7rem;"> \u00b7 {len(sub)} players \u00b7 '
+        f'ranked by weekly points</span></div>'
+        f'<div style="display:flex;gap:10px;overflow-x:auto;padding:10px 12px 12px;'
+        f'align-items:flex-end;">{row}</div></div>')
+
+
 def page_weekly():
     st.markdown("### \U0001F4C5 Weekly Competition")
     st.caption(f"{POD_LABEL} \u00b7 {sel_week} \u00b7 raw points, ranked **within each "
-               "role**. No Z-score here \u2014 this is the simple weekly race.")
+               "role**. The simple weekly race \u2014 no Z-score here.")
     if fdf.empty:
         no_data("No records for this POD and filter combination.")
         return
@@ -447,53 +553,137 @@ def page_weekly():
         no_data("No reviews match the current filters for this week.")
         return
 
-    cols = st.columns(3)
-    for col, band in zip(cols, BANDS):
-        with col:
-            st.markdown(band_badge(band), unsafe_allow_html=True)
-            sub = (boards[boards["band"] == band]
-                   .sort_values(["rank", "name"]).head(top_n).copy())
-            sub["medal"] = sub["rank"].apply(medal)
-            leaderboard_table(
-                sub[["medal", "name", "points", "reviews"]],
-                {"medal": st.column_config.TextColumn("Rank", width="small"),
-                 "name": st.column_config.TextColumn("Name"),
-                 "points": st.column_config.ProgressColumn(
-                     "Points", format="%d", min_value=0,
-                     max_value=int(max(sub["points"].max(), 1))),
-                 "reviews": st.column_config.NumberColumn("Reviews", width="small")})
+    st.markdown("#### \U0001F3DF\uFE0F Weekly Arena")
+    for band in BANDS:
+        sub = boards[boards["band"] == band].sort_values(["rank", "name"])
+        st.markdown(_weekly_lane(band, sub), unsafe_allow_html=True)
+    st.caption("Scroll a lane sideways to see every player. "
+               f"Name colour marks the POD (CP = {POD_COLOR['CP']}, NCP = {POD_COLOR['NCP']}).")
+
+    with st.expander("\U0001F4CB Detailed weekly tables"):
+        st.caption("Full roster for each role \u2014 everyone is listed, including anyone "
+                   "with no activity this week (shown as 0).")
+        roster = PROFILE if POD is None else PROFILE[PROFILE["POD"] == POD]
+        cols = st.columns(3)
+        for col, band in zip(cols, BANDS):
+            with col:
+                st.markdown(f"**{BAND_META[band]['emoji']} {band}**")
+                board = boards[boards["band"] == band][["POD", "name", "points"]]
+                rb = (roster[roster["Role"] == band][["POD", "Name"]]
+                      .rename(columns={"Name": "name"}))
+                full = rb.merge(board, on=["POD", "name"], how="left")
+                full["points"] = full["points"].fillna(0).astype(int)
+                full = full.sort_values(["points", "name"], ascending=[False, True])
+                full["rank"] = full["points"].rank(method="min", ascending=False).astype(int)
+                full["medal"] = full["rank"].apply(medal)
+                leaderboard_table(
+                    full[["medal", "name", "POD", "points"]],
+                    {"medal": st.column_config.TextColumn("Rank", width="small"),
+                     "name": st.column_config.TextColumn("Name"),
+                     "POD": st.column_config.TextColumn("POD", width="small"),
+                     "points": st.column_config.ProgressColumn(
+                         "Points", format="%d", min_value=0,
+                         max_value=int(max(full["points"].max(), 1)))})
 
     st.divider()
-    left, right = st.columns(2)
-    with left:
-        st.markdown("**Weekly points trend** (by band)")
-        trend = (fdf.melt(id_vars=["week_label", "week_start"],
-                          value_vars=[logic.POINT_COL[b] for b in BANDS],
-                          var_name="band_col", value_name="pts"))
-        trend["band"] = trend["band_col"].map({logic.POINT_COL[b]: b for b in BANDS})
-        trend = (trend.groupby(["week_start", "week_label", "band"], as_index=False)["pts"]
-                 .sum().sort_values("week_start"))
-        fig = px.line(trend, x="week_label", y="pts", color="band", markers=True,
-                      color_discrete_map=BAND_COLORS)
-        show(style_fig(fig, 320))
-    with right:
-        st.markdown("**Weekly participation summary**")
-        part = pd.DataFrame({
-            "band": BANDS,
-            "participants": [int(wk_df[logic.NAME_COL[b]].dropna().nunique()) for b in BANDS],
-            "reviews": [int(wk_df[logic.NAME_COL[b]].dropna().shape[0]) for b in BANDS],
-        })
-        fig = px.bar(part, x="band", y="reviews", color="band", text="reviews",
-                     color_discrete_map=BAND_COLORS)
-        fig.update_traces(textposition="outside")
+    st.markdown("#### \U0001F4C8 Weekly points trend (by role)")
+    trend = fdf.melt(id_vars=["week_label", "week_start"],
+                     value_vars=[logic.POINT_COL[b] for b in BANDS],
+                     var_name="band_col", value_name="pts")
+    trend["Role"] = trend["band_col"].map({logic.POINT_COL[b]: b for b in BANDS})
+    trend = (trend.dropna(subset=["Role"])
+             .groupby(["week_start", "week_label", "Role"], as_index=False)["pts"].sum()
+             .sort_values("week_start"))
+    fig = px.line(trend, x="week_label", y="pts", color="Role", markers=True,
+                  color_discrete_map=BAND_COLORS,
+                  labels={"week_label": "", "pts": "Points"})
+    fig.update_traces(line=dict(width=3), marker=dict(size=8))
+    fig.update_layout(legend_title_text="Role")
+    show(style_fig(fig, 420))
+
+    st.divider()
+    st.markdown("#### \U0001F4A5 Weekly Errors made (by player)")
+    st.caption("Errors on each owner's deliverables this week (lower is better).")
+    we = logic.weekly_errors_by_owner(wk_df)
+    if we.empty:
+        st.success("Clean sheet \u2014 no errors recorded this week!")
+    else:
+        we = we.sort_values("errors", ascending=False)
+        fig = px.bar(we, x="name", y="errors", text="errors",
+                     labels={"name": "", "errors": "Errors"})
+        fig.update_traces(textposition="outside", cliponaxis=False,
+                          marker_color="#E8734A")
+        fig.update_layout(showlegend=False, yaxis_title="Errors")
         show(style_fig(fig, 320, legend=False))
-        st.caption("Participants active per role this week: " +
-                   " \u00b7 ".join(f"{b}: {n}" for b, n in
-                                   zip(part["band"], part["participants"])))
 
 
 # ============================================================= FAIR (shared)
-def render_fair(period_col, period_val, label):
+FAIR_PALETTE = {
+    "cosmos": ["#7B6CF6", "#4CC9B0", "#F4A259", "#59C3FF", "#B57BE0", "#F15BB5", "#00BBF9", "#9B5DE5"],
+    "lava":   ["#FF7B2E", "#FFB03A", "#FF5252", "#FFD23F", "#E8734A", "#FF9F1C", "#D33F3F", "#FFC15E"],
+}
+
+
+def _fair_stage(rows, theme, title, accent):
+    backdrop = avatars.backdrop_data_uri(theme)
+    palette = FAIR_PALETTE.get(theme, BAR_SEQ)
+    maxv = max(float(rows["z_score_points"].max()), 1.0)
+    cols = []
+    for _, r in rows.iterrows():
+        pod, name = r["POD"], r["name"]
+        z, rank, pts = float(r["z_score_points"]), int(r["overall_rank"]), int(r["points"])
+        color = palette[(rank - 1) % len(palette)]
+        h = int(28 + z / maxv * 168)
+        plate = (medal(rank) + " " if rank <= 3 else "") + name
+        cols.append(
+            f'<div style="display:flex;flex-direction:column;align-items:center;'
+            f'justify-content:flex-end;flex:1 1 0;min-width:0;">'
+            f'<div style="font:800 14px system-ui;color:#fff;text-shadow:0 1px 2px #000a;">{z:.0f}</div>'
+            f'<img src="{av_uri(pod, name)}" width="44" style="image-rendering:pixelated;'
+            f'filter:drop-shadow(0 3px 2px #0007);margin-bottom:-3px;"/>'
+            f'<div style="width:42px;height:{h}px;border-radius:6px 6px 0 0;'
+            f'background:linear-gradient(180deg,{color},{_dark(color)});'
+            f'box-shadow:0 0 0 2px #00000030,inset 0 2px 0 #ffffff55;display:flex;'
+            f'justify-content:center;"><div style="color:#ffffffdd;font:800 11px system-ui;'
+            f'margin-top:4px;">{rank}</div></div>'
+            f'<div style="margin-top:5px;background:#0b1b2cd9;border:1px solid {color}99;'
+            f'border-radius:8px;padding:1px 6px;color:{pod_color(pod)};font:800 11px system-ui;'
+            f'white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis;">'
+            f'{plate}</div>'
+            f'<div style="color:{MUTED};font:600 0.55rem system-ui;">{pts} raw</div></div>')
+    return (
+        f'<div style="position:relative;height:360px;border-radius:14px;overflow:hidden;'
+        f'background-image:url({backdrop});background-size:cover;background-position:center bottom;'
+        f'image-rendering:pixelated;border:2px solid #0d2033;">'
+        f'<div style="position:absolute;top:0;left:0;right:0;background:linear-gradient(90deg,'
+        f'#0A1428e6,#0A142866);padding:8px 14px;">'
+        f'<span style="color:{accent};font:800 0.95rem system-ui;letter-spacing:2px;">{title}</span>'
+        f'<span style="color:{MUTED};font-size:0.72rem;"> \u00b7 bars scale to the fair '
+        f'0\u2013100 score</span></div>'
+        f'<div style="position:absolute;left:0;right:0;bottom:12px;display:flex;'
+        f'align-items:flex-end;justify-content:space-around;gap:6px;padding:0 12px;">'
+        f'{"".join(cols)}</div></div>')
+
+
+def _zscore_explainer():
+    return (
+        '<div style="border:1px solid #C8AA6E44;background:#0b1b2c;border-radius:12px;'
+        'padding:12px 16px;">'
+        '<div style="color:#C8AA6E;font:800 0.85rem system-ui;margin-bottom:4px;">'
+        '\U0001F4A1 What is a Z-score (in plain English)?</div>'
+        '<div style="color:#F0E6D2;font:500 0.86rem system-ui;line-height:1.5;">'
+        'Different roles get different chances to score \u2014 an Owner can bank +10 on every '
+        'clean job, while a Peer only scores when they catch something. Comparing their raw '
+        'points head-to-head wouldn\u2019t be fair. A <b>Z-score</b> fixes that: it measures '
+        '<b>how far above or below your own role\u2019s average</b> you are, in "steps" of the '
+        'group\u2019s normal spread. Zero means dead average for your role; positive means above '
+        'average; negative means below. We then stretch everyone\u2019s Z-scores onto a friendly '
+        '<b>0\u2013100 fair score</b>. So a Peer 2 who crushes it versus other Peer 2s can '
+        'outrank an Owner \u2014 because each person is judged against their <i>own</i> peer group, '
+        'not across roles.</div></div>')
+
+
+def render_fair(period_col, period_val, label, theme, title, accent):
     if fdf.empty:
         no_data("No records for this POD and filter combination.")
         return
@@ -501,94 +691,105 @@ def render_fair(period_col, period_val, label):
     if lb.empty:
         no_data("No reviews match the current filters for this period.")
         return
-    top = lb.head(top_n).copy()
-    top["medal"] = top["overall_rank"].apply(medal)
+
+    n = min(8, len(lb))
+    st.markdown(_fair_stage(lb.head(n), theme, title, accent), unsafe_allow_html=True)
+    st.caption(f"\U0001F3AE Top {n} by **fair score**. Name colour marks the POD "
+               f"(CP = {POD_COLOR['CP']}, NCP = {POD_COLOR['NCP']}).")
 
     st.markdown(f"**\U0001F3C6 Overall Fair Leaderboard \u2014 {label}** "
-                "&nbsp; (ranked by z_score_points)")
+                "&nbsp; (ranked by the 0\u2013100 fair score)")
+    top = lb.copy()
+    top["medal"] = top["overall_rank"].apply(medal)
     leaderboard_table(
-        top[["medal", "name", "band", "z_score_points", "points",
-             "band_percentile", "raw_rank"]],
+        top[["medal", "name", "POD", "band", "z_score_points", "points", "band_percentile"]],
         {"medal": st.column_config.TextColumn("Rank", width="small"),
          "name": st.column_config.TextColumn("Name"),
+         "POD": st.column_config.TextColumn("POD", width="small"),
          "band": st.column_config.TextColumn("Band"),
          "z_score_points": st.column_config.ProgressColumn(
              "Fair score", format="%.1f", min_value=0, max_value=100,
              help="Band-normalised 0-100. The official ranking metric."),
          "points": st.column_config.NumberColumn("Raw pts", help="Transparency only."),
-         "band_percentile": st.column_config.NumberColumn("Band %ile", format="%.0f"),
-         "raw_rank": st.column_config.NumberColumn("Raw rank")})
+         "band_percentile": st.column_config.NumberColumn("Band %ile", format="%.0f")},
+        height=420)
 
     with st.expander("Band-wise rankings"):
         tabs = st.tabs([f"{BAND_META[b]['emoji']} {b}" for b in BANDS])
         for tab, band in zip(tabs, BANDS):
             with tab:
-                bsub = lb[lb["band"] == band].sort_values("band_rank").head(top_n).copy()
+                bsub = lb[lb["band"] == band].sort_values("band_rank").copy()
                 bsub["medal"] = bsub["band_rank"].apply(medal)
                 leaderboard_table(
-                    bsub[["medal", "name", "z_score_points", "points",
+                    bsub[["medal", "name", "POD", "z_score_points", "points",
                           "band_avg_points", "band_percentile"]],
                     {"medal": st.column_config.TextColumn("Band rank", width="small"),
                      "name": st.column_config.TextColumn("Name"),
+                     "POD": st.column_config.TextColumn("POD", width="small"),
                      "z_score_points": st.column_config.NumberColumn("Fair", format="%.1f"),
                      "points": st.column_config.NumberColumn("Raw pts"),
                      "band_avg_points": st.column_config.NumberColumn("Band avg", format="%.1f"),
-                     "band_percentile": st.column_config.NumberColumn("%ile", format="%.0f")})
+                     "band_percentile": st.column_config.NumberColumn("%ile", format="%.0f")},
+                    height=320)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**Z-score distribution** (fair points by band)")
-        fig = px.histogram(lb, x="z_score_points", color="band", nbins=20,
-                           color_discrete_map=BAND_COLORS, barmode="overlay", opacity=0.7)
-        show(style_fig(fig, 300))
-    with c2:
-        st.markdown("**Raw points vs Fair points**")
-        fig = px.scatter(lb, x="points", y="z_score_points", color="band",
-                         hover_name="name", color_discrete_map=BAND_COLORS)
-        fig.update_traces(marker=dict(size=11, line=dict(width=1, color="#0A1428")))
-        show(style_fig(fig, 300))
-
-    c3, c4 = st.columns(2)
-    with c3:
-        st.markdown("**Raw rank vs Fair rank**")
-        st.caption("Points below the diagonal climbed under fair scoring; above it, fell.")
-        fig = px.scatter(lb, x="raw_rank", y="overall_rank", color="band",
-                         hover_name="name", color_discrete_map=BAND_COLORS)
-        fig.update_traces(marker=dict(size=11, line=dict(width=1, color="#0A1428")))
-        mx = int(max(lb["raw_rank"].max(), lb["overall_rank"].max()))
-        fig.add_shape(type="line", x0=1, y0=1, x1=mx, y1=mx,
-                      line=dict(color=MUTED, dash="dot"))
-        fig.update_yaxes(autorange="reversed")
-        fig.update_xaxes(autorange="reversed")
-        show(style_fig(fig, 320))
-    with c4:
-        st.markdown("**Band performance summary**")
-        summ = (lb.groupby("band")
-                .agg(participants=("name", "nunique"),
-                     avg_points=("points", "mean"),
-                     std_points=("band_std_points", "first")).reset_index())
-        summ["avg_points"] = summ["avg_points"].round(1)
-        leaderboard_table(
-            summ, {"band": st.column_config.TextColumn("Band"),
-                   "participants": st.column_config.NumberColumn("People"),
-                   "avg_points": st.column_config.NumberColumn("Avg raw pts", format="%.1f"),
-                   "std_points": st.column_config.NumberColumn("Std dev", format="%.2f")})
-        st.caption("Fair scoring compares each person against their own band's average "
-                   "and spread \u2014 not across bands.")
+    st.divider()
+    st.markdown("#### \U0001F514 Band performance \u2014 Bell curve")
+    st.caption("Each curve is a role's points distribution: the peak is the typical score for "
+               "that role, and a wider curve means more spread. Fair scoring measures where you "
+               "sit on your own role's curve.")
+    mom = logic.band_moments(lb)
+    fig = go.Figure()
+    any_curve = False
+    for _, m in mom.iterrows():
+        mu = float(m["mean"]); sd = float(m["std"])
+        if sd <= 0:
+            sd = max(mu * 0.15, 1.0)          # single/identical scores: gentle placeholder
+        xs = np.linspace(mu - 4 * sd, mu + 4 * sd, 100)
+        ys = np.exp(-0.5 * ((xs - mu) / sd) ** 2) / (sd * np.sqrt(2 * np.pi))
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="lines", name=str(m["band"]),
+            line=dict(color=BAND_COLORS[m["band"]], width=3),
+            fill="tozeroy", fillcolor=_rgba(BAND_COLORS[m["band"]], 0.15),
+            hovertemplate="%{x:.0f} pts<extra>" + str(m["band"]) + "</extra>"))
+        any_curve = True
+    if any_curve:
+        fig.update_layout(legend_title_text="Role", xaxis_title="Raw points",
+                          yaxis_title="Relative frequency")
+        fig.update_yaxes(showticklabels=False)
+        show(style_fig(fig, 340))
+        st.markdown(
+            '<div style="background:#0b1b2c;border:1px solid #C8AA6E44;border-radius:12px;'
+            'padding:10px 14px;">'
+            '<div style="color:#C8AA6E;font:800 0.8rem system-ui;margin-bottom:3px;">'
+            '\U0001F50E How to read this curve</div>'
+            '<div style="color:#F0E6D2;font:500 0.84rem system-ui;line-height:1.5;">'
+            'Pick your role\u2019s coloured curve. The <b>tall middle</b> is the score a typical '
+            'person in that role gets \u2014 most people land near there. Being to the '
+            '<b>right of the peak</b> means you scored <b>above average</b> for your role '
+            '(great!); to the <b>left</b> means below average. A <b>wide, flat</b> curve means '
+            'scores are spread out; a <b>tall, narrow</b> curve means everyone scores about the '
+            'same. Fair scoring simply measures how far right (or left) of your own curve\u2019s '
+            'peak you are \u2014 so you\u2019re only ever compared with people doing your job.</div>'
+            '</div>', unsafe_allow_html=True)
+    else:
+        no_data("Not enough data to draw the distribution.")
+    st.markdown(_zscore_explainer(), unsafe_allow_html=True)
 
 
 def page_monthly():
     st.markdown("### \U0001F4C8 Monthly Competition")
     st.caption(f"{POD_LABEL} \u00b7 {sel_month} \u00b7 **fair** ranking via band-wise "
-               "Z-score (z_score_points). Raw points shown for transparency only.")
-    render_fair("month_label", sel_month, sel_month)
+               "Z-score. Raw points shown for transparency only.")
+    render_fair("month_label", sel_month, sel_month, "cosmos",
+                "\U0001F31F SEASON LEADERBOARD", "#B57BE0")
 
 
 def page_quarterly():
     st.markdown("### \U0001F5D3\uFE0F Quarterly Competition")
-    st.caption(f"{POD_LABEL} \u00b7 {sel_quarter} \u00b7 same Z-score fairness as Monthly, "
-               "aggregated across the quarter.")
-    render_fair("quarter_label", sel_quarter, sel_quarter)
+    st.caption(f"{POD_LABEL} \u00b7 {sel_quarter} \u00b7 the grand quest \u2014 same Z-score "
+               "fairness as Monthly, aggregated across the whole quarter.")
+    render_fair("quarter_label", sel_quarter, sel_quarter, "lava",
+                "\U0001F48D LORD OF THE RANKINGS", "#FF9F1C")
 
 
 # ============================================================= PARTICIPANT
@@ -597,47 +798,61 @@ def page_participant():
     if fdf.empty:
         no_data("No records for this POD and filter combination.")
         return
-    name = sel_participant
-    st.markdown(f"**{name}** &nbsp;\u00b7&nbsp; {POD_LABEL}", unsafe_allow_html=True)
-    summ = logic.participant_summary(fdf, name)
+    name, ppod = sel_player_name, sel_player_pod
+    if not name:
+        no_data("No players available for the current POD selection.")
+        return
+    pdf = fdf[fdf["POD"] == ppod] if ppod else fdf
+    c = pod_color(ppod)
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:14px;margin:2px 0 8px;">'
+        f'<img src="{av_uri(ppod, name)}" width="62" style="image-rendering:pixelated;'
+        f'filter:drop-shadow(0 3px 3px #0008);"/>'
+        f'<div><div style="font:800 1.5rem system-ui;color:{c};">{name}'
+        f'<span style="color:{MUTED};font-size:0.8rem;"> \u00b7 POD {ppod}</span></div>'
+        f'<div style="color:{PARCHMENT};font:700 0.85rem system-ui;">'
+        f'{role_of(ppod, name)} \u00b7 plays as {av_name(ppod, name)}</div></div></div>',
+        unsafe_allow_html=True)
+
+    summ = logic.participant_summary(pdf, name)
     if summ["reviews"] == 0:
-        no_data(f"{name} has no activity in {POD_LABEL} for the current filters.")
+        no_data(f"{name} has no activity in POD {ppod} for the current filters.")
         return
 
     m = st.columns(4)
     m[0].metric("Total points", f"{summ['total']:,}")
-    errors_made = int(fdf[(fdf["Owner"] == name.upper()) & (fdf["has_error"])].shape[0])
+    errors_made = int(pdf[(pdf["Owner"] == name.upper()) & (pdf["has_error"])].shape[0])
     m[1].metric("Total Errors Made", errors_made,
                 help="Deliverables owned by this person that a peer flagged as an error.")
-    # band percentile + comparison from the selected month's fair board
     lb = fair_cached(df, "month_label", sel_month, POD, CAMPS, TYPES, BUCKS)
-    mine = lb[lb["name"] == name.upper()]
+    mine = lb[(lb["name"] == name.upper()) & (lb["POD"] == ppod)]
     best_pct = float(mine["band_percentile"].max()) if not mine.empty else 0.0
     m[2].metric(f"Best band %ile \u00b7 {sel_month}",
                 f"{best_pct:.0f}" if not mine.empty else DASH)
-    primary = max(summ["by_band"], key=lambda b: summ["by_band"][b]["points"])
-    m[3].metric("Primary role", primary,
-                help="Role where this participant earns the most points.")
+    m[3].metric("Primary role", role_of(ppod, name),
+                help="This player's role from player_profiles.csv.")
 
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**Weekly performance** (points earned, any role)")
-        w = logic.participant_points_by(fdf, name, "week_label")
-        wk_order = fdf[["week_label", "week_start"]].drop_duplicates()
+        w = logic.participant_points_by(pdf, name, "week_label")
+        wk_order = pdf[["week_label", "week_start"]].drop_duplicates()
         w = w.merge(wk_order, on="week_label", how="left").sort_values("week_start")
         if w.empty:
             st.info("No activity for this participant under the current filters.")
         else:
-            fig = px.line(w, x="week_label", y="points", markers=True)
+            fig = px.line(w, x="week_label", y="points", markers=True,
+                          labels={"week_label": "", "points": "Points"})
             fig.update_traces(line_color=GOLD, marker_color=GOLD)
             show(style_fig(fig, 300, legend=False))
     with c2:
         st.markdown("**Monthly performance**")
-        mth = logic.participant_points_by(fdf, name, "month_label")
-        mo_order = fdf[["month_label", "month_key"]].drop_duplicates().sort_values("month_key")
+        mth = logic.participant_points_by(pdf, name, "month_label")
+        mo_order = pdf[["month_label", "month_key"]].drop_duplicates().sort_values("month_key")
         mth = mo_order.merge(mth, on="month_label", how="left").fillna({"points": 0})
-        fig = px.bar(mth, x="month_label", y="points", text="points")
-        fig.update_traces(marker_color=GOLD, textposition="outside")
+        fig = px.bar(mth, x="month_label", y="points", text="points",
+                     labels={"month_label": "", "points": "Points"})
+        fig.update_traces(marker_color=GOLD, textposition="outside", cliponaxis=False)
         show(style_fig(fig, 300, legend=False))
 
     st.markdown("**Band average comparison** " + f"({sel_month})")
@@ -645,17 +860,23 @@ def page_participant():
     for band in BANDS:
         me = mine[mine["band"] == band]
         if not me.empty:
-            rows.append({"band": band, "who": "You",
-                         "points": int(me.iloc[0]["points"])})
+            rows.append({"band": band, "who": "You", "points": int(me.iloc[0]["points"])})
             rows.append({"band": band, "who": "Band average",
                          "points": float(me.iloc[0]["band_avg_points"])})
     if rows:
         comp = pd.DataFrame(rows)
         fig = px.bar(comp, x="band", y="points", color="who", barmode="group",
-                     color_discrete_map={"You": GOLD, "Band average": "#5B8DEF"})
+                     color_discrete_map={"You": GOLD, "Band average": "#5B8DEF"},
+                     labels={"band": "", "points": "Points"})
+        fig.update_layout(legend_title_text="")
         show(style_fig(fig, 300))
     else:
         st.caption("No band-level entries for this participant in the selected month.")
+
+    st.divider()
+    st.markdown("#### \U0001F579\uFE0F All Players")
+    st.caption("Every player with their unique game character and its name (archetype).")
+    st.markdown(roster_gallery(PROFILE, show_role=False), unsafe_allow_html=True)
 
 
 # ============================================================= ERROR ANALYTICS
@@ -677,8 +898,11 @@ def page_error():
     with c1:
         st.markdown("**Bucket distribution**")
         bd = logic.bucket_distribution(fdf)
+        bd = bd[bd["count"] > 0]                      # never plot empty slices
         fig = px.pie(bd, names="Bucket", values="count", hole=0.5,
                      color="Bucket", color_discrete_map=BUCKET_COLOR)
+        fig.update_traces(textinfo="percent", sort=False)
+        fig.update_layout(legend_title_text="Bucket")
         show(style_fig(fig, 300))
     with c2:
         st.markdown("**Errors over time** (by week)")
@@ -686,31 +910,36 @@ def page_error():
         if et.empty:
             st.info("No errors under the current filters.")
         else:
-            fig = px.line(et, x="week_label", y="errors", markers=True)
+            fig = px.line(et, x="week_label", y="errors", markers=True,
+                          labels={"week_label": "", "errors": "Errors"})
             fig.update_traces(line_color="#E8734A", marker_color="#E8734A")
             show(style_fig(fig, 300, legend=False))
 
     c3, c4 = st.columns(2)
     with c3:
-        st.markdown("**Campaign-wise errors**")
-        ce = logic.campaign_errors(fdf).head(top_n)
-        fig = px.bar(ce, x="errors", y="Campaign Name", orientation="h")
-        fig.update_traces(marker_color=GOLD)
-        fig.update_yaxes(autorange="reversed")
-        show(style_fig(fig, 320, legend=False))
-    with c4:
         st.markdown("**Owner-wise errors** (errors on their work)")
-        oe = logic.owner_errors(fdf).head(top_n)
-        fig = px.bar(oe, x="errors", y="Owner", orientation="h")
-        fig.update_traces(marker_color="#5B8DEF")
-        fig.update_yaxes(autorange="reversed")
-        show(style_fig(fig, 320, legend=False))
-
-    st.markdown("**Peer-wise catches** (errors each peer caught)")
-    pc = logic.peer_catches(fdf).head(top_n)
-    fig = px.bar(pc, x="name", y="catches", text="catches")
-    fig.update_traces(marker_color="#4CC9B0", textposition="outside")
-    show(style_fig(fig, 300, legend=False))
+        oe = logic.owner_errors(fdf)
+        if oe.empty:
+            st.info("No errors under the current filters.")
+        else:
+            fig = px.bar(oe, x="errors", y="Owner", orientation="h",
+                         labels={"errors": "Errors", "Owner": ""})
+            fig.update_traces(marker_color="#5B8DEF")
+            fig.update_yaxes(autorange="reversed")
+            show(style_fig(fig, 360, legend=False))
+    with c4:
+        st.markdown("**Peer-wise catches** (errors each peer caught)")
+        pc = logic.peer_catches(fdf)
+        if pc.empty:
+            st.info("No catches under the current filters.")
+        else:
+            fig = px.bar(pc, x="name", y="catches", text="catches",
+                         labels={"name": "", "catches": "Catches"})
+            fig.update_traces(marker_color="#4CC9B0", textposition="outside",
+                              cliponaxis=False)
+            mx = int(pc["catches"].max())
+            fig.update_yaxes(range=[0, mx * 1.20 + 1])   # headroom so labels aren't clipped
+            show(style_fig(fig, 360, legend=False))
 
 
 # ---------------------------------------------------------------- router

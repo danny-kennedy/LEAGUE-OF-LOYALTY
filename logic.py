@@ -43,6 +43,34 @@ SCORING_RULES = [
     ("Client escalation", _M + "20", _M + "30", _M + "50"),
 ]
 
+ROLE_CANON = {"owner": "Owner", "peer 1": "Peer 1", "peer1": "Peer 1",
+              "peer 2": "Peer 2", "peer2": "Peer 2"}
+
+
+def load_profiles(path: str) -> pd.DataFrame:
+    """Editable roster: POD, Name, Role, Gender, Archetype. Drives roles + avatars.
+    Add a row for a new player and refresh; roles/avatars can be edited freely."""
+    p = pd.read_csv(path)
+    p.columns = p.columns.str.strip()
+    p["POD"] = p["POD"].astype(str).str.strip().str.upper()
+    p["Name"] = p["Name"].astype(str).str.strip().str.upper()
+    p["Role"] = p["Role"].map(lambda x: ROLE_CANON.get(str(x).strip().lower(), "Owner"))
+    p["Gender"] = (p["Gender"].astype(str).str.strip().str.upper().str[:1]
+                   .replace({"": "M", "N": "M"}))
+    p["Archetype"] = p["Archetype"].astype(str).str.strip().str.lower()
+    return p.drop_duplicates(["POD", "Name"]).reset_index(drop=True)
+
+
+def profile_map(profiles: pd.DataFrame) -> dict:
+    """(POD, NAME) -> {role, gender, archetype}."""
+    return {(r.POD, r.Name): {"role": r.Role, "gender": r.Gender, "archetype": r.Archetype}
+            for r in profiles.itertuples(index=False)}
+
+
+def roster_players(profiles: pd.DataFrame, pod=None):
+    p = profiles if not pod or pod in ("All", "ALL") else profiles[profiles["POD"] == pod]
+    return p.sort_values(["POD", "Role", "Name"]).reset_index(drop=True)
+
 
 # ---- Loading & preparation ---------------------------------------------------
 def load_and_prepare(path: str) -> pd.DataFrame:
@@ -145,21 +173,22 @@ def list_participants(df):
 
 # ---- Core aggregation --------------------------------------------------------
 def band_aggregate(df: pd.DataFrame) -> pd.DataFrame:
-    """Long format (name, band, points, reviews) summed per person-in-role."""
+    """Long format (POD, name, band, points, reviews) summed per person-in-role.
+    POD is carried so the same abbreviation in two pods stays two separate players."""
     parts = []
     for band in BANDS:
         ncol, pcol = NAME_COL[band], POINT_COL[band]
-        sub = df[[ncol, pcol]].dropna(subset=[ncol])
+        sub = df[["POD", ncol, pcol]].dropna(subset=[ncol])
         if sub.empty:
             continue
-        g = (sub.groupby(ncol)[pcol]
+        g = (sub.groupby(["POD", ncol])[pcol]
              .agg(points="sum", reviews="size").reset_index()
              .rename(columns={ncol: "name"}))
         g["band"] = band
         parts.append(g)
     if not parts:
-        return pd.DataFrame(columns=["name", "band", "points", "reviews"])
-    return pd.concat(parts, ignore_index=True)[["name", "band", "points", "reviews"]]
+        return pd.DataFrame(columns=["POD", "name", "band", "points", "reviews"])
+    return pd.concat(parts, ignore_index=True)[["POD", "name", "band", "points", "reviews"]]
 
 
 # ---- WEEKLY: raw points within each role -------------------------------------
@@ -175,14 +204,14 @@ def weekly_boards(df_week: pd.DataFrame) -> pd.DataFrame:
 
 def weekly_player_totals(df_week: pd.DataFrame) -> pd.DataFrame:
     """Total points each person earned this week across all roles, for the arcade
-    standings. Returns name, points, band (their primary role that week), rank."""
+    standings. Returns POD, name, points, band (primary role that week), rank."""
     agg = band_aggregate(df_week)
     if agg.empty:
-        return pd.DataFrame(columns=["name", "points", "band", "rank"])
-    tot = agg.groupby("name", as_index=False)["points"].sum()
+        return pd.DataFrame(columns=["POD", "name", "points", "band", "rank"])
+    tot = agg.groupby(["POD", "name"], as_index=False)["points"].sum()
     primary = (agg.sort_values("points", ascending=False)
-               .drop_duplicates("name")[["name", "band"]])
-    out = tot.merge(primary, on="name", how="left")
+               .drop_duplicates(["POD", "name"])[["POD", "name", "band"]])
+    out = tot.merge(primary, on=["POD", "name"], how="left")
     out = out.sort_values("points", ascending=False).reset_index(drop=True)
     out["rank"] = out["points"].rank(method="min", ascending=False).astype(int)
     return out
@@ -191,7 +220,7 @@ def weekly_player_totals(df_week: pd.DataFrame) -> pd.DataFrame:
 # ---- MONTHLY / QUARTERLY: band-wise Z-score fair metric ----------------------
 def zscore_leaderboard(long_df: pd.DataFrame) -> pd.DataFrame:
     """Band-wise Z-score normalised to 0-100 (z_score_points), the fair metric."""
-    cols = ["overall_rank", "band_rank", "name", "band", "points",
+    cols = ["overall_rank", "band_rank", "POD", "name", "band", "points",
             "band_avg_points", "band_std_points", "band_z_score",
             "z_score_points", "band_percentile", "raw_rank", "reviews"]
     df = long_df.copy()
@@ -199,6 +228,8 @@ def zscore_leaderboard(long_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
     # clean
+    if "POD" not in df.columns:
+        df["POD"] = "ALL"
     df["name"] = df["name"].astype(str).str.strip().str.upper()
     df = df[df["band"].isin(BANDS)].copy()
     df["points"] = pd.to_numeric(df["points"], errors="coerce").fillna(0)
@@ -258,7 +289,8 @@ def weekly_champion(df_week):
     if agg.empty:
         return None
     top = agg.sort_values("points", ascending=False).iloc[0]
-    return {"name": top["name"], "band": top["band"], "points": int(top["points"])}
+    return {"pod": top["POD"], "name": top["name"], "band": top["band"],
+            "points": int(top["points"])}
 
 
 def monthly_champion(df_month):
@@ -266,8 +298,23 @@ def monthly_champion(df_month):
     if lb.empty:
         return None
     top = lb.iloc[0]
-    return {"name": top["name"], "band": top["band"],
+    return {"pod": top["POD"], "name": top["name"], "band": top["band"],
             "z": float(top["z_score_points"]), "points": int(top["points"])}
+
+
+def band_moments(lb: pd.DataFrame) -> pd.DataFrame:
+    """Per-band mean/std/count of raw points — feeds the bell-curve chart."""
+    if lb.empty:
+        return pd.DataFrame(columns=["band", "mean", "std", "n"])
+    g = (lb.groupby("band")
+         .agg(mean=("band_avg_points", "first"), std=("band_std_points", "first"),
+              n=("name", "count")).reset_index())
+    return g
+
+
+def weekly_errors_by_owner(df_week: pd.DataFrame) -> pd.DataFrame:
+    """Errors made this week, attributed to the owner of the deliverable."""
+    return owner_errors(df_week).rename(columns={"Owner": "name"})
 
 
 # ---- Participant analytics ---------------------------------------------------
@@ -316,10 +363,10 @@ def errors_over_time(df, label_col="week_label", order_col="week_start") -> pd.D
     return out
 
 
-def _clean_key(series: pd.Series) -> pd.Series:
-    """Drop NaN/blank grouping keys so charts never show an 'Undefined' category."""
-    s = series.astype("string").str.strip()
-    return s.replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "None": pd.NA})
+# def _clean_key(series: pd.Series) -> pd.Series:
+#     """Drop NaN/blank grouping keys so charts never show an 'Undefined' category."""
+#     s = series.astype("string").str.strip()
+#     return s.replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "None": pd.NA})
 
 
 def campaign_errors(df) -> pd.DataFrame:

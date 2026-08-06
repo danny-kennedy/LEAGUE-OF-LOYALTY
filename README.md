@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # League of Loyalty — QC Competition Dashboard
 
 A gamified, production-ready Streamlit dashboard for QC / review competitions. It reads a
@@ -64,33 +63,65 @@ band_avg_points, band_std_points, band_z_score, z_score_points, band_percentile`
 
 ---
 
-## 3. Pages & filters
+## 3. Pages, players & filters
 
-**Pages:** Overview (gamified arcade) · Weekly Competition · Monthly Competition ·
+**Pages:** Overview (arcade cup) · Weekly Competition · Monthly Competition ·
 Quarterly Competition · Participant Analytics · Error Analytics · About Competition.
 
-**Gamified Overview.** The Overview is an arcade "Service Desk Cup" scene: the top 10
-players by **total weekly points** stand as pixel-art game characters on colour-coded podium
-bars scaled to their score, over a pixel backdrop. Each player gets a unique, procedurally
-generated character avatar (deterministic from their name, in `avatars.py` — no external
-assets). A right-hand panel shows five champions, each in its own colour: Weekly Top Owner,
-Weekly Top Peer 1, Weekly Top Peer 2, Monthly Top Person, Quarterly Top Person — with avatar,
-name, band and points.
+### Editable player profiles (`player_profiles.csv`)
 
-**About Competition** explains the game: 1 month = 1 **Season** (Platinum, Gold, Diamond),
-1 quarter = 1 **League** (Vanguard, Tempest, Ascension, Apex), the weekly/monthly/quarterly
-scoring philosophies, and the full **Defect Bucketing Criteria** table plus the Minor / Major /
-Brief-Interpretation error catalogs.
+Roles **and** avatars are driven by an editable roster, `player_profiles.csv`:
+
+```
+POD, Name, Role, Gender, Archetype
+```
+
+- **Role** (`Owner` / `Peer 1` / `Peer 2`) sets a player's primary role everywhere
+  (Participant Analytics reads it directly — no more guessing from points).
+- **Archetype** is the game character (knight, mage, ranger, royal, pirate, ninja, viking,
+  robot, goblin, druid, samurai, pharaoh, bard, paladin). **Gender** picks the male/female
+  variant (e.g. `mage` → *Wizard* / *Sorceress*). Change either and the avatar changes.
+- **Add a new player** by adding a row; they appear in the rosters immediately, and in the
+  competitions once they have review rows.
+- The same abbreviation can exist in **both pods** as two different people — identity is
+  `(POD, Name)`, and each POD gets its own name colour (CP = blue, NCP = orange) so `KJ` in
+  CP is never confused with `KJ` in NCP.
+
+Both `player_profiles.csv` and `review_log.csv` are **read on load and cached**; click
+**🔄 Refresh data** (top of the sidebar) after editing either file and the dashboard
+recomputes from disk.
+
+### Avatars
+
+Every player has a **unique** pixel-art game character, generated procedurally in `avatars.py`
+(no external assets). Uniqueness comes from archetype + gender + a per-player colour hue.
+Avatars appear on Overview, Weekly, Monthly, Quarterly and Participant Analytics, and the full
+gallery (with each character's name) is on About Competition and at the bottom of Participant
+Analytics.
+
+### Arcade themes per page
+
+Each competition page is its own arcade scene, distinct but consistent:
+
+- **Overview** — daytime "Service Desk Cup": top-10 by weekly points on podium bars, plus a
+  five-champion panel (Weekly Top Owner / Peer 1 / Peer 2, Monthly Top, Quarterly Top).
+- **Weekly** — a dusk **stadium**: three stacked lanes (Owner, Peer 1, Peer 2) of ranked
+  avatar cards, an enlarged points-trend line, and a **Weekly Errors made** chart.
+- **Monthly (Season)** — a **cosmic** night podium ranked by the fair 0–100 score.
+- **Quarterly** — a **lava boss level** podium (boss-league finals).
+
+Monthly and Quarterly also show a **bell-curve** of each role's points distribution and a
+plain-English explainer of what a Z-score is and why it makes cross-role ranking fair.
+
+### Seasons
+
+1 month = 1 **Season**: **Dawn → Eclipse → Ascension**. (There is no separate "league"
+concept — seasons are the only tier.)
 
 **Filters (one pipeline, applied in this order):** POD → Month / Week / Quarter → Campaign →
-Type → Error Bucket → Participant → Top N. POD is the top-level selector; every KPI, table,
-chart and leaderboard re-scopes to it. If a selection has no records, the page shows a clean
-"No data available" message instead of erroring.
-
-> **Refresh button:** it is intentionally **disabled for now** (kept in the same place, same
-> look). Clicking it does not reload the CSV or recompute anything. To restore later, have
-> its click handler call `st.cache_data.clear()` then `st.rerun()` (a one-line change,
-> flagged in `app.py`).
+Type → Error Bucket → Player. POD is the top-level selector; every KPI, table, chart and
+scene re-scopes to it. Leaderboards show every qualifying player (scroll rather than a Top-N
+cap). If a selection has no records, the page shows a clean "No data available" message.
 
 ---
 
@@ -98,15 +129,22 @@ chart and leaderboard re-scopes to it. If a selection has no records, the page s
 
 ```
 comp_dashboard/
-├── app.py                 # Streamlit UI (6 pages, Plotly charts)
+├── app.py                 # Streamlit UI (7 pages, arcade scenes, Plotly charts)
 ├── logic.py               # all calculations (pure pandas/numpy — weekly + Z-score)
-├── review_log.csv         # the data the dashboard reads
-├── generate_data.py       # regenerates demo data in the exact schema
+├── avatars.py             # procedural pixel-art avatars + per-page backdrops (Pillow)
+├── player_profiles.csv    # EDITABLE roster: POD, Name, Role, Gender, Archetype
+├── review_log.csv         # the review events the dashboard reads
+├── generate_data.py       # regenerates both CSVs (seed data) in the exact schema
 ├── validate_app.py        # dev-only smoke test (runs every page against the data)
-├── requirements.txt       # streamlit, pandas, plotly
+├── requirements.txt       # streamlit, pandas, plotly, pillow
 └── .streamlit/
     └── config.toml        # dark/gold Hextech theme
 ```
+
+**About Competition** explains the seasons (Dawn / Eclipse / Ascension), the
+weekly/monthly/quarterly scoring philosophies, the full **Defect Bucketing Criteria** table,
+the Minor / Major / Brief-Interpretation error catalogs, and a gamified roster of every player
+(name, role, avatar, avatar name).
 
 ---
 
@@ -165,9 +203,6 @@ For an internal rollout you can self-host instead:
 |---|---|
 | `command not found: streamlit` | Activate the virtual environment, then reinstall requirements. |
 | `python: command not found` | Use `python3`. |
-| Numbers look stale | The refresh button is paused by design; reload the page or update the CSV and redeploy. |
+| Numbers look stale | Click **🔄 Refresh data** in the sidebar (it clears the cache and reloads both CSVs), or reload the page. |
 | Deploy fails on Cloud | Ensure `requirements.txt` is in the repo root and main file is `app.py`. |
 | Theme not applied online | Commit `.streamlit/config.toml` to the repo. |
-=======
-# LEAGUE-OF-LOYALTY
->>>>>>> 4e97a6c84cac6794013aec44730b58913f5da3c0

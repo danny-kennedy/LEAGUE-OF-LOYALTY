@@ -392,7 +392,7 @@ def _overview_header(pod_label, week_label, reviews, players, points, errors):
         f'<div><div style="color:{GOLD};font:800 0.7rem system-ui;letter-spacing:3px;">'
         f'\U0001F3C6 SERVICE DESK CUP</div>'
         f'<div style="color:{PARCHMENT};font:800 1.5rem system-ui;letter-spacing:1px;'
-        f'line-height:1.1;">WEEKLY ARCADE STANDINGS</div>'
+        f'line-height:1.1;">WEEKLY STANDINGS</div>'
         f'<div style="color:{MUTED};font-size:0.8rem;">{pod_label} \u00b7 {week_label}</div></div>'
         f'<div style="display:flex;gap:8px;flex-wrap:wrap;">{chips}</div></div>')
 

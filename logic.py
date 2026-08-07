@@ -362,10 +362,10 @@ def errors_over_time(df, label_col="week_label", order_col="week_start") -> pd.D
     return out
 
 
-# def _clean_key(series: pd.Series) -> pd.Series:
-#     """Drop NaN/blank grouping keys so charts never show an 'Undefined' category."""
-#     s = series.astype("string").str.strip()
-#     return s.replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "None": pd.NA})
+def _clean_key(series: pd.Series) -> pd.Series:
+    """Drop NaN/blank grouping keys so charts never show an 'Undefined' category."""
+    s = series.astype("string").str.strip()
+    return s.replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "None": pd.NA})
 
 
 def campaign_errors(df) -> pd.DataFrame:

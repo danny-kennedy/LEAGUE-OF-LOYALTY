@@ -9,10 +9,10 @@ Two independent, clearly separated methodologies:
   * MONTHLY / QUARTERLY -> band-wise Z-score normalised to a 0-100 fair metric,
     so people are compared only against peers doing the same role.
 """
-from __future__ import annotations
-
+from **future** import annotations
 import numpy as np
 import pandas as pd
+print("Using logic.py from:", **file**)
 
 # ---- Domain metadata (single place so the UI stays consistent) ---------------
 BANDS = ["Owner", "Peer 1", "Peer 2"]

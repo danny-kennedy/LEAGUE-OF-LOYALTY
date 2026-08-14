@@ -397,7 +397,7 @@ def _overview_header(pod_label, week_label, reviews, players, points, errors):
         f'gap:12px;flex-wrap:wrap;background:linear-gradient(90deg,#0A1428,{BG_PANEL});'
         f'border:1px solid {GOLD}55;border-radius:14px;padding:12px 18px;margin-bottom:12px;">'
         f'<div><div style="color:{GOLD};font:800 0.7rem system-ui;letter-spacing:3px;">'
-        f'\U0001F3C6 SERVICE DESK CUP</div>'
+        f'\U0001F3C6 LOYALTY PACIFIC</div>'
         f'<div style="color:{PARCHMENT};font:800 1.5rem system-ui;letter-spacing:1px;'
         f'line-height:1.1;">WEEKLY STANDINGS</div>'
         f'<div style="color:{MUTED};font-size:0.8rem;">{pod_label} \u00b7 {week_label}</div></div>'

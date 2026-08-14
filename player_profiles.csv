@@ -1,43 +1,43 @@
 POD,Name,Role,Gender,Archetype
 CP,CY,Owner,F,knight
-CP,NS,Owner,F,mage
+CP,NS,Owner,F,hero
 CP,KB,Owner,M,ranger
 CP,SP,Owner,M,royal
 CP,SV,Owner,M,pirate
 CP,AD,Owner,M,ninja
 CP,KY,Owner,M,viking
 CP,KN,Owner,F,robot
-CP,NJ,Owner,F,goblin
+CP,NJ,Owner,F,captain
 CP,HM,Owner,M,druid
 CP,GR,Owner,M,samurai
-CP,JR,Owner,M,pharaoh
 CP,RN,Owner,M,bard
 CP,ASU,Peer 1,M,paladin
 CP,MG,Peer 1,F,knight
-CP,RV,Peer 1,F,mage
+CP,RV,Peer 1,F,astro
 CP,YS,Peer 1,M,ranger
 CP,SUK,Peer 1,M,royal
 CP,VI,Peer 1,M,pirate
 CP,DH,Peer 1,M,ninja
 CP,AZ,Peer 1,M,viking
 CP,PK,Peer 1,M,robot
-CP,RB,Peer 1,M,goblin
+CP,RB,Peer 1,M,royal
 CP,KJ,Peer 2,M,druid
 CP,RD,Peer 2,M,samurai
 CP,NV,Peer 2,F,pharaoh
 CP,BM,Peer 2,M,bard
 CP,AK,Peer 2,M,paladin
 NCP,KJ,Owner,M,knight
-NCP,AP,Owner,F,mage
+NCP,AP,Owner,F,knight
 NCP,RJ,Owner,M,ranger
 NCP,HA,Owner,M,royal
 NCP,BM,Owner,M,pirate
 NCP,AM,Owner,M,ninja
 NCP,NV,Peer 1,F,viking
 NCP,SA,Peer 1,F,robot
-NCP,SH,Peer 1,M,goblin
-NCP,AU,Peer 2,F,druid
+NCP,SH,Peer 1,M,paladin
+NCP,AU,Peer 2,F,ranger
 NCP,ED,Peer 2,F,samurai
 NCP,SC,Peer 2,M,pharaoh
 NCP,AR,Peer 2,M,bard
 NCP,PV,Peer 2,M,paladin
+NCP,JR,Owner,M,pharaoh

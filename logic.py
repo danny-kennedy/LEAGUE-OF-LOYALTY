@@ -36,11 +36,13 @@ _D = "\u2014"      # —  (N/A)
 _M = "\u2212"      # −  (minus, so the UI can colour penalties red)
 SCORING_RULES = [
     ("Perfect deliverable (passes both peer checks)", "+10", _D, _D),
-    ("Brief Interpretation Error caught", _D, "+7", "+10"),
-    ("Major Error caught", _D, "+5", "+6"),
-    ("Minor Error caught", _D, "+3", "+4"),
+    ("Brief Interpretation Error (correctly flagged)", _D, "+7", "+10"),
+    ("Major Error (correctly flagged)", _D, "+5", "+6"),
+    ("Minor Error (correctly flagged)", _D, "+3", "+4"),
     ("Incorrectly flagged error", _D, _M + "3", _M + "4"),
     ("Client escalation", _M + "20", _M + "30", _M + "50"),
+    ("Delay", _M + "5", _M + "5", _M + "5"),
+    ("Error missed by L2, caught during L3 review", _D, _M + "2", _D),
 ]
 
 ROLE_CANON = {"owner": "Owner", "peer 1": "Peer 1", "peer1": "Peer 1",

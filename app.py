@@ -260,8 +260,8 @@ def _scoring_table_html():
     head = (f'<tr style="background:{_dark(GOLD,0.5)};">'
             + "".join(f'<th style="padding:8px 10px;text-align:{a};color:{PARCHMENT};'
                       f'font:800 0.8rem system-ui;">{c}</th>'
-                      for c, a in [("Event / Bucket", "left"), ("Owner", "center"),
-                                   ("Peer 1", "center"), ("Peer 2", "center")]) + "</tr>")
+                      for c, a in [("Event / Error bucket", "left"), ("L1 (Owner)", "center"),
+                                   ("L2 (Peer 1)", "center"), ("L3 (Peer 2)", "center")]) + "</tr>")
     bucket_hex = {"Brief Interpretation Error": BUCKET_COLOR["Brief Interpretation Error"],
                   "Major Error": BUCKET_COLOR["Major Error"],
                   "Minor Error": BUCKET_COLOR["Minor Error"]}
@@ -440,8 +440,8 @@ def _stage(players):
         f'{"".join(cols)}</div></div>')
 
 
-def _champ_box(category, color, entry, band):
-    """entry = (pod, name, points) or None."""
+def _champ_box(category, color, entry, band, tied=None):
+    """entry = (pod, name, points) or None. tied = list of (pod, name) sharing #1."""
     if entry and entry[1]:
         pod, name, pts_s = entry[0], entry[1], fmt_pts(entry[2])
         av = av_uri(pod, name)
@@ -450,6 +450,17 @@ def _champ_box(category, color, entry, band):
     else:
         pod, name, pts_s, name_c, pod_tag = "", DASH, DASH, PARCHMENT, ""
         av = avatars.avatar_data_uri("knight", "M", "?")
+
+    tie_pill, sub = "", (f'<div style="color:{MUTED};font:600 0.72rem system-ui;">{band}</div>')
+    if tied and len(tied) > 1:
+        names = [t[1] for t in tied]
+        shown = ", ".join(names[:4]) + (f" +{len(names) - 4}" if len(names) > 4 else "")
+        tie_pill = (f'<span style="background:{color}2e;border:1px solid {color}88;color:{color};'
+                    f'font:800 0.55rem system-ui;border-radius:9px;padding:1px 6px;margin-left:6px;'
+                    f'white-space:nowrap;">\U0001F91D {len(names)}-WAY TIE</span>')
+        sub = (f'<div style="color:{MUTED};font:600 0.66rem system-ui;white-space:nowrap;'
+               f'overflow:hidden;text-overflow:ellipsis;" title="{", ".join(names)}">'
+               f'\U0001F91D {band} \u00b7 {shown}</div>')
     return (
         f'<div style="border:1px solid {color}66;'
         f'background:linear-gradient(180deg,{color}22,{color}0c);border-radius:12px;'
@@ -459,11 +470,22 @@ def _champ_box(category, color, entry, band):
         f'<div style="flex:1;min-width:0;">'
         f'<div style="color:{color};font:800 0.62rem system-ui;letter-spacing:1px;">{category}</div>'
         f'<div style="font:800 1rem system-ui;line-height:1.15;color:{name_c};'
-        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{name}{pod_tag}</div>'
-        f'<div style="color:{MUTED};font:600 0.72rem system-ui;">{band}</div></div>'
+        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{name}{pod_tag}{tie_pill}</div>'
+        f'{sub}</div>'
         f'<div style="text-align:right;"><div style="color:{color};font:800 1.15rem system-ui;">'
         f'{pts_s}</div><div style="color:#8aa0b4;font:700 0.55rem system-ui;letter-spacing:1px;">'
         f'PTS</div></div></div>')
+
+
+def _tie_group(dfin, rank_col):
+    """Return ((pod,name,points) winner, [(pod,name), ...] all sharing the top rank)."""
+    if dfin.empty:
+        return None, None
+    tr = dfin[rank_col].min()
+    grp = dfin[dfin[rank_col] == tr].sort_values(["POD", "name"])
+    first = grp.iloc[0]
+    return ((first["POD"], first["name"], float(first["points"])),
+            grp[["POD", "name"]].values.tolist())
 
 
 def page_overview():
@@ -485,13 +507,21 @@ def page_overview():
     wb = logic.weekly_boards(wk_df)
 
     def band_top(b):
-        s = wb[wb["band"] == b].sort_values("rank")
-        return (s.iloc[0]["POD"], s.iloc[0]["name"], float(s.iloc[0]["points"])) \
-            if not s.empty else None
+        return _tie_group(wb[wb["band"] == b], "rank")
 
-    mc = logic.monthly_champion(mo_df)
-    ql = logic.fair_leaderboard(q_df)
-    qtop = ql.iloc[0] if not ql.empty else None
+    mlb = logic.fair_leaderboard(mo_df)
+    qlb = logic.fair_leaderboard(q_df)
+    o_entry, o_tie = band_top("Owner")
+    p1_entry, p1_tie = band_top("Peer 1")
+    p2_entry, p2_tie = band_top("Peer 2")
+    m_entry, m_tie = _tie_group(mlb, "overall_rank")
+    q_entry, q_tie = _tie_group(qlb, "overall_rank")
+
+    def band_of(entry, lb):
+        if not entry:
+            return "\u2014"
+        row = lb[(lb["POD"] == entry[0]) & (lb["name"] == entry[1])]
+        return row.iloc[0]["band"] if not row.empty else "\u2014"
 
     stage_col, right_col = st.columns([2.6, 1], gap="medium")
     with stage_col:
@@ -501,21 +531,40 @@ def page_overview():
         else:
             st.markdown(_stage(totals.head(n)), unsafe_allow_html=True)
             st.caption(f"\U0001F3AE Top {n} by **total points earned this week** "
-                       "(all roles combined). Bars scale to weekly points.")
+                       "(all roles combined). Owners score 10 per clean campaign; peers score "
+                       "by catching errors \u2014 so with no errors this week, peers sit at 0.")
     with right_col:
         st.markdown("##### \U0001F3C5 Champions")
         html = (
-            _champ_box("WEEKLY TOP OWNER", "#5B8DEF", band_top("Owner"), "Owner")
-            + _champ_box("WEEKLY TOP PEER 1", "#C8AA6E", band_top("Peer 1"), "Peer 1")
-            + _champ_box("WEEKLY TOP PEER 2", "#4CC9B0", band_top("Peer 2"), "Peer 2")
-            + _champ_box("MONTHLY TOP PERSON", "#9B5DE5",
-                         (mc["pod"], mc["name"], mc["points"]) if mc else None,
-                         mc["band"] if mc else "\u2014")
-            + _champ_box("QUARTERLY TOP PERSON", "#FF7B54",
-                         (qtop["POD"], qtop["name"], float(qtop["points"]))
-                         if qtop is not None else None,
-                         qtop["band"] if qtop is not None else "\u2014"))
+            _champ_box("WEEKLY TOP OWNER", "#5B8DEF", o_entry, "Owner", o_tie)
+            + _champ_box("WEEKLY TOP PEER 1", "#C8AA6E", p1_entry, "Peer 1", p1_tie)
+            + _champ_box("WEEKLY TOP PEER 2", "#4CC9B0", p2_entry, "Peer 2", p2_tie)
+            + _champ_box("MONTHLY TOP PERSON", "#9B5DE5", m_entry, band_of(m_entry, mlb), m_tie)
+            + _champ_box("QUARTERLY TOP PERSON", "#FF7B54", q_entry, band_of(q_entry, qlb), q_tie))
         st.markdown(html, unsafe_allow_html=True)
+
+    # ---- full detail: every participant this week (podium only shows top 10) ----
+    with st.expander("\U0001F4CB Show detailed table \u2014 every participant this week"):
+        det = logic.band_aggregate(wk_df)
+        if det.empty:
+            st.info("No participants recorded for this week.")
+        else:
+            det = det.rename(columns={"name": "Name", "band": "Role", "reviews": "Campaigns",
+                                      "raw_points": "Raw", "points": "Pts/camp"})
+            det = det.sort_values(["Role", "Pts/camp", "Name"], ascending=[True, False, True])
+            st.caption("Each person in each role they played this week. **Pts/camp** = points "
+                       "\u00f7 campaigns (the fair, normalised score); **Raw** = the un-normalised "
+                       "total. Owners bank 10 per clean campaign; peers earn only by catching errors.")
+            leaderboard_table(
+                det[["Name", "POD", "Role", "Campaigns", "Raw", "Pts/camp"]],
+                {"Name": st.column_config.TextColumn("Name"),
+                 "POD": st.column_config.TextColumn("POD", width="small"),
+                 "Role": st.column_config.TextColumn("Role"),
+                 "Campaigns": st.column_config.NumberColumn("Campaigns", format="%d"),
+                 "Raw": st.column_config.NumberColumn("Raw pts", format="%d"),
+                 "Pts/camp": st.column_config.ProgressColumn(
+                     "Pts / campaign", format="%.1f", min_value=0,
+                     max_value=float(max(det["Pts/camp"].max(), 1)))})
 
 
 # ============================================================= WEEKLY (arena lanes)
@@ -716,9 +765,8 @@ def _progress_banner(theme, accent, have, need, unit):
         f'\U0001F579\uFE0F {phrase}\u2026 <span style="font-size:0.7rem;color:{PARCHMENT};'
         f'letter-spacing:1px;">DATA TO BE UPDATED</span></div>'
         f'<div style="color:{PARCHMENT};font:600 0.82rem system-ui;margin-top:2px;">'
-        f'<b>{filled} of {need}</b> {unit}s collected \u2014 standings below are '
-        f'<b>provisional</b> and will power up as each {unit} lands. \U0001F4BE Updates occur '
-        f'every Friday.</div></div>' 
+        f'<b>{filled} of {need} {unit}s collected!</b> Standings below are provisional and '
+        f'will power up as each {unit} lands. \U0001F4BE Updates occur every Friday.</div></div>'
         f'<div style="text-align:center;"><div style="color:{accent};font:800 1.9rem system-ui;'
         f'line-height:1;">{pct}%</div><div style="color:{MUTED};font:700 0.55rem system-ui;'
         f'letter-spacing:1px;">CHARGED</div></div></div>'

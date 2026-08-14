@@ -26,22 +26,24 @@ GW, GH = 16, 18
 
 ARCH_NAME = {
     "knight":  ("Knight", "Valkyrie"),
-    "mage":    ("Wizard", "Sorceress"),
+    "mage":    ("Wizard", "Star Mage"),
     "ranger":  ("Ranger", "Huntress"),
     "royal":   ("King", "Queen"),
     "pirate":  ("Pirate", "Corsair"),
     "ninja":   ("Ninja", "Kunoichi"),
     "viking":  ("Viking", "Shieldmaiden"),
     "robot":   ("Mecha", "Gynoid"),
-    "goblin":  ("Goblin", "Sprite"),
-    "druid":   ("Druid", "Enchantress"),
+    "hero":    ("Hero", "Heroine"),
+    "druid":   ("Druid", "Guardian"),
     "samurai": ("Samurai", "Onna-Musha"),
     "pharaoh": ("Pharaoh", "Cleopatra"),
     "bard":    ("Bard", "Muse"),
     "paladin": ("Paladin", "Templar"),
+    "captain": ("Captain", "Skipper"),
+    "astro":   ("Astronaut", "Astronaut"),
 }
 ARCHES = list(ARCH_NAME.keys())
-COVERING = {"ninja", "robot", "pharaoh"}
+COVERING = {"ninja", "robot", "pharaoh", "astro"}
 
 SKIN = ["#F1C27D", "#FFD9A8", "#E0AC69", "#C68642", "#8D5524"]
 HAIR = [(58, 40, 30), (30, 30, 36), (188, 146, 66), (150, 60, 40), (96, 64, 44)]
@@ -89,9 +91,7 @@ def _draw(archetype, gender, seed):
     body_d = _scale(body, 0.72)
     trim = _rgba(TRIM[(seed >> 8) % len(TRIM)])
     hair = HAIR[(seed >> 4) % len(HAIR)] + (255,)
-    if arch == "goblin":
-        skin = (122, 199, 79, 255)
-    elif arch == "robot":
+    if arch == "robot":
         skin = (188, 196, 208, 255)
     else:
         skin = _rgba(SKIN[(seed >> 13) % len(SKIN)])
@@ -157,9 +157,14 @@ def _draw(archetype, gender, seed):
         _px(d, 8, 0, 8, 1, trim)
         img.putpixel((8, 0), (255, 120, 200, 255) if female else (255, 90, 90, 255))
         _px(d, 6, 6, 9, 6, DARK); _px(d, 6, 9, 9, 10, _scale(body, 0.85))
-    elif arch == "goblin":
-        _px(d, 3, 3, 4, 4, skin); _px(d, 11, 3, 12, 4, skin)
-        _px(d, 7, 1, 8, 2, body_d); img.putpixel((8, 6), (255, 255, 255, 255))
+    elif arch == "hero":
+        # domino mask + a bright chest emblem + swept hair
+        if not female:
+            _px(d, 5, 2, 10, 2, hair); _px(d, 4, 3, 4, 4, hair); _px(d, 11, 3, 11, 4, hair)
+        _px(d, 5, 4, 10, 4, trim)                                  # mask band
+        _px(d, 6, 4, 6, 4, (255, 255, 255, 255)); _px(d, 9, 4, 9, 4, (255, 255, 255, 255))
+        _px(d, 7, 9, 8, 10, trim)                                  # chest emblem
+        _px(d, 3, 8, 3, 10, trim); _px(d, 12, 8, 12, 10, trim)     # cape edges
     elif arch == "druid":
         _px(d, 4, 2, 11, 3, (70, 130, 70, 255))
         img.putpixel((4, 1), (90, 160, 80, 255)); img.putpixel((11, 1), (90, 160, 80, 255))
@@ -179,6 +184,18 @@ def _draw(archetype, gender, seed):
         _px(d, 4, 2, 11, 3, GREY)
         img.putpixel((7, 0), (255, 240, 150, 255)); img.putpixel((8, 0), (255, 240, 150, 255))
         _px(d, 3, 2, 3, 3, (255, 255, 255, 255)); _px(d, 12, 2, 12, 3, (255, 255, 255, 255))
+    elif arch == "captain":
+        _px(d, 4, 2, 11, 2, DARK)                                  # peaked cap
+        _px(d, 4, 3, 11, 3, (245, 245, 250, 255))                 # cap band
+        _px(d, 7, 2, 8, 2, (240, 205, 70, 255))                   # gold badge
+        _px(d, 3, 9, 3, 11, (245, 245, 250, 255))                 # epaulettes
+        _px(d, 12, 9, 12, 11, (245, 245, 250, 255))
+    elif arch == "astro":
+        _px(d, 4, 1, 11, 6, (238, 240, 246, 255))                 # helmet dome
+        _px(d, 5, 4, 10, 6, (70, 120, 180, 255))                  # visor
+        _px(d, 5, 4, 10, 4, (150, 200, 240, 255))                 # visor glint
+        img.putpixel((4, 2), trim); img.putpixel((11, 2), trim)
+        _px(d, 6, 9, 9, 9, trim)                                  # chest control panel
     return img
 
 

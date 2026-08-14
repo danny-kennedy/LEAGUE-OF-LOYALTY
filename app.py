@@ -103,6 +103,13 @@ def medal(rank: int) -> str:
     return {1: "\U0001F947", 2: "\U0001F948", 3: "\U0001F949"}.get(int(rank), f"#{int(rank)}")
 
 
+def fmt_pts(x) -> str:
+    """Points are normalised per campaign, so they can be fractional. Show a whole
+    number when it is one (10), otherwise one decimal (7.5)."""
+    x = float(x)
+    return str(int(round(x))) if abs(x - round(x)) < 1e-9 else f"{x:.1f}"
+
+
 def banner():
     st.markdown(
         f'<div style="border:1px solid {GOLD}55;border-radius:14px;padding:16px 22px;'
@@ -392,19 +399,20 @@ def _overview_header(pod_label, week_label, reviews, players, points, errors):
         f'<div><div style="color:{GOLD};font:800 0.7rem system-ui;letter-spacing:3px;">'
         f'\U0001F3C6 SERVICE DESK CUP</div>'
         f'<div style="color:{PARCHMENT};font:800 1.5rem system-ui;letter-spacing:1px;'
-        f'line-height:1.1;">WEEKLY STANDINGS</div>'
+        f'line-height:1.1;">WEEKLY ARCADE STANDINGS</div>'
         f'<div style="color:{MUTED};font-size:0.8rem;">{pod_label} \u00b7 {week_label}</div></div>'
         f'<div style="display:flex;gap:8px;flex-wrap:wrap;">{chips}</div></div>')
 
 
 def _stage(players):
     backdrop = avatars.backdrop_data_uri("arcade")
-    maxp = max(int(players["points"].max()), 1)
+    maxp = max(float(players["points"].max()), 1.0)
     cols = []
     for _, r in players.iterrows():
-        pod, name, pts, rank = r["POD"], r["name"], int(r["points"]), int(r["rank"])
+        pod, name, rank = r["POD"], r["name"], int(r["rank"])
+        ptsf = float(r["points"]); pts = fmt_pts(ptsf)
         color = BAR_SEQ[(rank - 1) % len(BAR_SEQ)]
-        h = int(30 + max(pts, 0) / maxp * 175)
+        h = int(30 + max(ptsf, 0) / maxp * 175)
         av = av_uri(pod, name)
         plate = (medal(rank) + " " if rank <= 3 else "") + name
         cols.append(
@@ -435,7 +443,7 @@ def _stage(players):
 def _champ_box(category, color, entry, band):
     """entry = (pod, name, points) or None."""
     if entry and entry[1]:
-        pod, name, pts_s = entry[0], entry[1], str(entry[2])
+        pod, name, pts_s = entry[0], entry[1], fmt_pts(entry[2])
         av = av_uri(pod, name)
         name_c = pod_color(pod)
         pod_tag = f'<span style="color:{MUTED};font-size:0.6rem;"> {pod}</span>'
@@ -478,7 +486,7 @@ def page_overview():
 
     def band_top(b):
         s = wb[wb["band"] == b].sort_values("rank")
-        return (s.iloc[0]["POD"], s.iloc[0]["name"], int(s.iloc[0]["points"])) \
+        return (s.iloc[0]["POD"], s.iloc[0]["name"], float(s.iloc[0]["points"])) \
             if not s.empty else None
 
     mc = logic.monthly_champion(mo_df)
@@ -504,7 +512,7 @@ def page_overview():
                          (mc["pod"], mc["name"], mc["points"]) if mc else None,
                          mc["band"] if mc else "\u2014")
             + _champ_box("QUARTERLY TOP PERSON", "#FF7B54",
-                         (qtop["POD"], qtop["name"], int(qtop["points"]))
+                         (qtop["POD"], qtop["name"], float(qtop["points"]))
                          if qtop is not None else None,
                          qtop["band"] if qtop is not None else "\u2014"))
         st.markdown(html, unsafe_allow_html=True)
@@ -517,7 +525,7 @@ def _weekly_lane(band, sub):
     emoji = BAND_META[band]["emoji"]
     cards = []
     for _, r in sub.iterrows():
-        pod, name, pts, rank = r["POD"], r["name"], int(r["points"]), int(r["rank"])
+        pod, name, pts, rank = r["POD"], r["name"], fmt_pts(r["points"]), int(r["rank"])
         cards.append(
             f'<div style="min-width:74px;text-align:center;flex:0 0 auto;">'
             f'<div style="color:#fff;font:800 12px system-ui;text-shadow:0 1px 2px #000;">{medal(rank)}</div>'
@@ -542,8 +550,10 @@ def _weekly_lane(band, sub):
 
 def page_weekly():
     st.markdown("### \U0001F4C5 Weekly Competition")
-    st.caption(f"{POD_LABEL} \u00b7 {sel_week} \u00b7 raw points, ranked **within each "
-               "role**. The simple weekly race \u2014 no Z-score here.")
+    st.caption(f"{POD_LABEL} \u00b7 {sel_week} \u00b7 **points per campaign** (a clean campaign "
+               "= 10), ranked **within each role**. Scores are normalised by the number of "
+               "campaigns each person handled, so doing more campaigns is never a penalty and "
+               "everyone is compared fairly.")
     if fdf.empty:
         no_data("No records for this POD and filter combination.")
         return
@@ -572,7 +582,7 @@ def page_weekly():
                 rb = (roster[roster["Role"] == band][["POD", "Name"]]
                       .rename(columns={"Name": "name"}))
                 full = rb.merge(board, on=["POD", "name"], how="left")
-                full["points"] = full["points"].fillna(0).astype(int)
+                full["points"] = full["points"].fillna(0).round(1)
                 full = full.sort_values(["points", "name"], ascending=[False, True])
                 full["rank"] = full["points"].rank(method="min", ascending=False).astype(int)
                 full["medal"] = full["rank"].apply(medal)
@@ -582,8 +592,8 @@ def page_weekly():
                      "name": st.column_config.TextColumn("Name"),
                      "POD": st.column_config.TextColumn("POD", width="small"),
                      "points": st.column_config.ProgressColumn(
-                         "Points", format="%d", min_value=0,
-                         max_value=int(max(full["points"].max(), 1)))})
+                         "Pts/camp", format="%.1f", min_value=0,
+                         max_value=float(max(full["points"].max(), 1)))})
 
     st.divider()
     st.markdown("#### \U0001F4C8 Weekly points trend (by role)")
@@ -631,7 +641,8 @@ def _fair_stage(rows, theme, title, accent):
     cols = []
     for _, r in rows.iterrows():
         pod, name = r["POD"], r["name"]
-        z, rank, pts = float(r["z_score_points"]), int(r["overall_rank"]), int(r["points"])
+        z, rank = float(r["z_score_points"]), int(r["overall_rank"])
+        raw = int(r.get("raw_points", r["points"]))
         color = palette[(rank - 1) % len(palette)]
         h = int(28 + z / maxv * 168)
         plate = (medal(rank) + " " if rank <= 3 else "") + name
@@ -650,7 +661,7 @@ def _fair_stage(rows, theme, title, accent):
             f'border-radius:8px;padding:1px 6px;color:{pod_color(pod)};font:800 11px system-ui;'
             f'white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis;">'
             f'{plate}</div>'
-            f'<div style="color:{MUTED};font:600 0.55rem system-ui;">{pts} raw</div></div>')
+            f'<div style="color:{MUTED};font:600 0.55rem system-ui;">{raw} pts</div></div>')
     return (
         f'<div style="position:relative;height:360px;border-radius:14px;overflow:hidden;'
         f'background-image:url({backdrop});background-size:cover;background-position:center bottom;'
@@ -683,18 +694,79 @@ def _zscore_explainer():
         'not across roles.</div></div>')
 
 
-def render_fair(period_col, period_val, label, theme, title, accent):
+_FAIR_PHRASE = {"cosmos": "SEASON LOADING", "lava": "LEAGUE QUEST CHARGING"}
+
+
+def _progress_banner(theme, accent, have, need, unit):
+    """Arcade-style 'data is filling up' meter shown while a season/league isn't complete."""
+    filled = max(0, min(have, need))
+    phrase = _FAIR_PHRASE.get(theme, "LOADING")
+    seg = "".join(
+        f'<div style="flex:1;height:15px;border-radius:4px;'
+        f'background:{accent if i < filled else "#ffffff14"};'
+        f'box-shadow:{("0 0 10px " + accent) if i < filled else "none"};"></div>'
+        for i in range(need))
+    pct = int(round(filled / max(need, 1) * 100))
+    return (
+        f'<div style="position:relative;border-radius:14px;overflow:hidden;border:2px solid {accent}66;'
+        f'background:linear-gradient(90deg,#0A1428,{BG_PANEL});padding:14px 18px;margin-bottom:12px;">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;'
+        f'flex-wrap:wrap;">'
+        f'<div><div style="color:{accent};font:800 1.05rem system-ui;letter-spacing:2px;">'
+        f'\U0001F579\uFE0F {phrase}\u2026 <span style="font-size:0.7rem;color:{PARCHMENT};'
+        f'letter-spacing:1px;">DATA TO BE UPDATED</span></div>'
+        f'<div style="color:{PARCHMENT};font:600 0.82rem system-ui;margin-top:2px;">'
+        f'<b>{filled} of {need}</b> {unit}s collected \u2014 standings below are '
+        f'<b>provisional</b> and will power up as each {unit} lands. \U0001F4BE Updates occur '
+        f'every Friday.</div></div>' 
+        f'<div style="text-align:center;"><div style="color:{accent};font:800 1.9rem system-ui;'
+        f'line-height:1;">{pct}%</div><div style="color:{MUTED};font:700 0.55rem system-ui;'
+        f'letter-spacing:1px;">CHARGED</div></div></div>'
+        f'<div style="display:flex;gap:6px;margin-top:11px;">{seg}</div></div>')
+
+
+def _coming_soon(theme, accent, label, phrase_extra=""):
+    """Gamified 'level locked / coming soon' hero for a period with no data yet."""
+    backdrop = avatars.backdrop_data_uri(theme)
+    return (
+        f'<div style="position:relative;height:300px;border-radius:14px;overflow:hidden;'
+        f'background-image:url({backdrop});background-size:cover;background-position:center;'
+        f'image-rendering:pixelated;border:2px solid #0d2033;display:flex;align-items:center;'
+        f'justify-content:center;text-align:center;">'
+        f'<div style="background:#0A1428d9;border:2px solid {accent}88;border-radius:16px;'
+        f'padding:22px 30px;max-width:78%;">'
+        f'<div style="font-size:2.4rem;line-height:1;">\U0001F512</div>'
+        f'<div style="color:{accent};font:800 1.3rem system-ui;letter-spacing:2px;margin-top:6px;">'
+        f'LEVEL LOCKED \u2014 COMING SOON</div>'
+        f'<div style="color:{PARCHMENT};font:600 0.9rem system-ui;margin-top:6px;">'
+        f'{label} hasn\u2019t collected enough data yet. {phrase_extra}Keep updating the weekly '
+        f'review log \u2014 this arena unlocks automatically once the data is in. \U0001F3AE</div>'
+        f'</div></div>')
+
+
+def render_fair(period_col, period_val, label, theme, title, accent, progress=None):
     if fdf.empty:
         no_data("No records for this POD and filter combination.")
         return
     lb = fair_cached(df, period_col, period_val, POD, CAMPS, TYPES, BUCKS)
+
+    provisional = False
+    if progress:
+        have, need, unit = progress
+        if have < need:
+            provisional = True
+            st.markdown(_progress_banner(theme, accent, have, need, unit),
+                        unsafe_allow_html=True)
+
     if lb.empty:
-        no_data("No reviews match the current filters for this period.")
+        # never blank: a gamified 'coming soon' hero instead of an empty page
+        st.markdown(_coming_soon(theme, accent, label), unsafe_allow_html=True)
         return
 
     n = min(8, len(lb))
     st.markdown(_fair_stage(lb.head(n), theme, title, accent), unsafe_allow_html=True)
-    st.caption(f"\U0001F3AE Top {n} by **fair score**. Name colour marks the POD "
+    prov_tag = " \u00b7 \U0001F7E1 provisional (season still filling)" if provisional else ""
+    st.caption(f"\U0001F3AE Top {n} by **fair score**{prov_tag}. Name colour marks the POD "
                f"(CP = {POD_COLOR['CP']}, NCP = {POD_COLOR['NCP']}).")
 
     st.markdown(f"**\U0001F3C6 Overall Fair Leaderboard \u2014 {label}** "
@@ -702,7 +774,8 @@ def render_fair(period_col, period_val, label, theme, title, accent):
     top = lb.copy()
     top["medal"] = top["overall_rank"].apply(medal)
     leaderboard_table(
-        top[["medal", "name", "POD", "band", "z_score_points", "points", "band_percentile"]],
+        top[["medal", "name", "POD", "band", "z_score_points", "points", "raw_points",
+             "band_percentile"]],
         {"medal": st.column_config.TextColumn("Rank", width="small"),
          "name": st.column_config.TextColumn("Name"),
          "POD": st.column_config.TextColumn("POD", width="small"),
@@ -710,7 +783,9 @@ def render_fair(period_col, period_val, label, theme, title, accent):
          "z_score_points": st.column_config.ProgressColumn(
              "Fair score", format="%.1f", min_value=0, max_value=100,
              help="Band-normalised 0-100. The official ranking metric."),
-         "points": st.column_config.NumberColumn("Raw pts", help="Transparency only."),
+         "points": st.column_config.NumberColumn("Pts/camp", format="%.1f",
+             help="Points per campaign (normalised)."),
+         "raw_points": st.column_config.NumberColumn("Raw", help="Un-normalised total."),
          "band_percentile": st.column_config.NumberColumn("Band %ile", format="%.0f")},
         height=420)
 
@@ -727,16 +802,16 @@ def render_fair(period_col, period_val, label, theme, title, accent):
                      "name": st.column_config.TextColumn("Name"),
                      "POD": st.column_config.TextColumn("POD", width="small"),
                      "z_score_points": st.column_config.NumberColumn("Fair", format="%.1f"),
-                     "points": st.column_config.NumberColumn("Raw pts"),
+                     "points": st.column_config.NumberColumn("Pts/camp", format="%.1f"),
                      "band_avg_points": st.column_config.NumberColumn("Band avg", format="%.1f"),
                      "band_percentile": st.column_config.NumberColumn("%ile", format="%.0f")},
                     height=320)
 
     st.divider()
     st.markdown("#### \U0001F514 Band performance \u2014 Bell curve")
-    st.caption("Each curve is a role's points distribution: the peak is the typical score for "
-               "that role, and a wider curve means more spread. Fair scoring measures where you "
-               "sit on your own role's curve.")
+    st.caption("Each curve is a role's spread of points-per-campaign: the peak is the typical "
+               "score for that role, and a wider curve means more spread. Fair scoring measures "
+               "where you sit on your own role's curve.")
     mom = logic.band_moments(lb)
     fig = go.Figure()
     any_curve = False
@@ -753,7 +828,7 @@ def render_fair(period_col, period_val, label, theme, title, accent):
             hovertemplate="%{x:.0f} pts<extra>" + str(m["band"]) + "</extra>"))
         any_curve = True
     if any_curve:
-        fig.update_layout(legend_title_text="Role", xaxis_title="Raw points",
+        fig.update_layout(legend_title_text="Role", xaxis_title="Points per campaign",
                           yaxis_title="Relative frequency")
         fig.update_yaxes(showticklabels=False)
         show(style_fig(fig, 340))
@@ -779,17 +854,19 @@ def render_fair(period_col, period_val, label, theme, title, accent):
 def page_monthly():
     st.markdown("### \U0001F4C8 Monthly Competition")
     st.caption(f"{POD_LABEL} \u00b7 {sel_month} \u00b7 **fair** ranking via band-wise "
-               "Z-score. Raw points shown for transparency only.")
+               "Z-score. A season is complete once 4 weeks of data are in.")
+    have = logic.weeks_in_month(fdf, sel_month)
     render_fair("month_label", sel_month, sel_month, "cosmos",
-                "\U0001F31F SEASON LEADERBOARD", "#B57BE0")
+                "\U0001F31F SEASON LEADERBOARD", "#B57BE0", progress=(have, 4, "week"))
 
 
 def page_quarterly():
     st.markdown("### \U0001F5D3\uFE0F Quarterly Competition")
     st.caption(f"{POD_LABEL} \u00b7 {sel_quarter} \u00b7 the grand quest \u2014 same Z-score "
-               "fairness as Monthly, aggregated across the whole quarter.")
+               "fairness as Monthly. A league is complete once 3 months of data are in.")
+    have = logic.months_in_quarter(fdf, sel_quarter)
     render_fair("quarter_label", sel_quarter, sel_quarter, "lava",
-                "\U0001F48D LORD OF THE RANKINGS", "#FF9F1C")
+                "\U0001F48D LORD OF THE RANKINGS", "#FF9F1C", progress=(have, 3, "month"))
 
 
 # ============================================================= PARTICIPANT

@@ -10,6 +10,7 @@ Two independent, clearly separated methodologies:
     so people are compared only against peers doing the same role.
 """
 from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 
@@ -172,8 +173,15 @@ def list_participants(df):
 
 # ---- Core aggregation --------------------------------------------------------
 def band_aggregate(df: pd.DataFrame) -> pd.DataFrame:
-    """Long format (POD, name, band, points, reviews) summed per person-in-role.
-    POD is carried so the same abbreviation in two pods stays two separate players."""
+    """Long format per person-in-role, POD-aware so the same abbreviation in two pods
+    stays two separate players.
+
+    Points are NORMALISED per campaign: `points` = total points / number of campaigns
+    that person handled in that role this period. This makes scoring fair regardless of
+    how many campaigns someone was assigned (2 clean campaigns and 1 clean campaign both
+    average 10). `raw_points` keeps the un-normalised total for transparency; `reviews`
+    is the campaign count.
+    """
     parts = []
     for band in BANDS:
         ncol, pcol = NAME_COL[band], POINT_COL[band]
@@ -181,13 +189,15 @@ def band_aggregate(df: pd.DataFrame) -> pd.DataFrame:
         if sub.empty:
             continue
         g = (sub.groupby(["POD", ncol])[pcol]
-             .agg(points="sum", reviews="size").reset_index()
+             .agg(raw_points="sum", reviews="size").reset_index()
              .rename(columns={ncol: "name"}))
+        g["points"] = (g["raw_points"] / g["reviews"]).round(2)   # points per campaign
         g["band"] = band
         parts.append(g)
     if not parts:
-        return pd.DataFrame(columns=["POD", "name", "band", "points", "reviews"])
-    return pd.concat(parts, ignore_index=True)[["POD", "name", "band", "points", "reviews"]]
+        return pd.DataFrame(columns=["POD", "name", "band", "points", "raw_points", "reviews"])
+    return pd.concat(parts, ignore_index=True)[
+        ["POD", "name", "band", "points", "raw_points", "reviews"]]
 
 
 # ---- WEEKLY: raw points within each role -------------------------------------
@@ -219,7 +229,7 @@ def weekly_player_totals(df_week: pd.DataFrame) -> pd.DataFrame:
 # ---- MONTHLY / QUARTERLY: band-wise Z-score fair metric ----------------------
 def zscore_leaderboard(long_df: pd.DataFrame) -> pd.DataFrame:
     """Band-wise Z-score normalised to 0-100 (z_score_points), the fair metric."""
-    cols = ["overall_rank", "band_rank", "POD", "name", "band", "points",
+    cols = ["overall_rank", "band_rank", "POD", "name", "band", "points", "raw_points",
             "band_avg_points", "band_std_points", "band_z_score",
             "z_score_points", "band_percentile", "raw_rank", "reviews"]
     df = long_df.copy()
@@ -229,6 +239,8 @@ def zscore_leaderboard(long_df: pd.DataFrame) -> pd.DataFrame:
     # clean
     if "POD" not in df.columns:
         df["POD"] = "ALL"
+    if "raw_points" not in df.columns:
+        df["raw_points"] = df.get("points", 0)
     df["name"] = df["name"].astype(str).str.strip().str.upper()
     df = df[df["band"].isin(BANDS)].copy()
     df["points"] = pd.to_numeric(df["points"], errors="coerce").fillna(0)
@@ -265,7 +277,8 @@ def zscore_leaderboard(long_df: pd.DataFrame) -> pd.DataFrame:
     df["band_avg_points"] = df["band_avg_points"].round(1)
     df["band_std_points"] = df["band_std_points"].round(2)
     df["band_z_score"] = df["band_z_score"].round(2)
-    df["points"] = df["points"].astype(int)
+    df["points"] = df["points"].round(1)              # normalised pts/campaign
+    df["raw_points"] = pd.to_numeric(df["raw_points"], errors="coerce").fillna(0).astype(int)
     return df[cols].sort_values("overall_rank").reset_index(drop=True)
 
 
@@ -289,7 +302,17 @@ def weekly_champion(df_week):
         return None
     top = agg.sort_values("points", ascending=False).iloc[0]
     return {"pod": top["POD"], "name": top["name"], "band": top["band"],
-            "points": int(top["points"])}
+            "points": round(float(top["points"]), 1)}
+
+
+def weeks_in_month(df, month_label) -> int:
+    """How many distinct weeks of data a month has (drives 'season ready' gating)."""
+    return int(df.loc[df["month_label"] == month_label, "week_start"].nunique())
+
+
+def months_in_quarter(df, quarter_label) -> int:
+    """How many distinct months of data a quarter has (drives 'league ready' gating)."""
+    return int(df.loc[df["quarter_label"] == quarter_label, "month_key"].nunique())
 
 
 def monthly_champion(df_month):
@@ -298,7 +321,7 @@ def monthly_champion(df_month):
         return None
     top = lb.iloc[0]
     return {"pod": top["POD"], "name": top["name"], "band": top["band"],
-            "z": float(top["z_score_points"]), "points": int(top["points"])}
+            "z": float(top["z_score_points"]), "points": round(float(top["points"]), 1)}
 
 
 def band_moments(lb: pd.DataFrame) -> pd.DataFrame:

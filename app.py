@@ -383,21 +383,21 @@ def page_about():
 
 
 # ============================================================= OVERVIEW (arcade)
-def _overview_header(pod_label, week_label, reviews, players, points, errors):
+def _overview_header(pod_label, week_label, reviews, players, points, errors, delays):
     chips = "".join(
         f'<div style="text-align:center;background:#0b1b2c;border:1px solid #ffffff1f;'
-        f'border-radius:10px;padding:6px 12px;min-width:70px;">'
+        f'border-radius:10px;padding:6px 12px;min-width:66px;">'
         f'<div style="color:{PARCHMENT};font:800 1.2rem system-ui;">{v}</div>'
         f'<div style="color:#8aa0b4;font:700 0.56rem system-ui;letter-spacing:1px;">{k}</div>'
         f'</div>'
         for k, v in [("REVIEWS", reviews), ("PLAYERS", players),
-                     ("POINTS", points), ("ERRORS", errors)])
+                     ("POINTS", points), ("ERRORS", errors), ("DELAYS", delays)])
     return (
         f'<div style="display:flex;align-items:center;justify-content:space-between;'
         f'gap:12px;flex-wrap:wrap;background:linear-gradient(90deg,#0A1428,{BG_PANEL});'
         f'border:1px solid {GOLD}55;border-radius:14px;padding:12px 18px;margin-bottom:12px;">'
         f'<div><div style="color:{GOLD};font:800 0.7rem system-ui;letter-spacing:3px;">'
-        f'\U0001F3C6 LOYALTY PACIFIC</div>'
+        f'\U0001F3C6 SERVICE DESK CUP</div>'
         f'<div style="color:{PARCHMENT};font:800 1.5rem system-ui;letter-spacing:1px;'
         f'line-height:1.1;">WEEKLY STANDINGS</div>'
         f'<div style="color:{MUTED};font-size:0.8rem;">{pod_label} \u00b7 {week_label}</div></div>'
@@ -493,8 +493,9 @@ def page_overview():
     players = logic.total_participants(fdf)
     points = int(fdf[[logic.POINT_COL[b] for b in BANDS]].to_numpy().sum())
     errors = int(fdf["has_error"].sum())
+    delays = logic.count_delays(fdf)
     st.markdown(_overview_header(POD_LABEL, sel_week, f"{reviews:,}", players,
-                                 f"{points:,}", errors), unsafe_allow_html=True)
+                                 f"{points:,}", errors, delays), unsafe_allow_html=True)
     if fdf.empty:
         no_data("No records for this POD and filter combination.")
         return
@@ -674,6 +675,22 @@ def page_weekly():
                           marker_color="#E8734A")
         fig.update_layout(showlegend=False, yaxis_title="Errors")
         show(style_fig(fig, 320, legend=False))
+
+    st.divider()
+    st.markdown("#### \u23F1\uFE0F Delays this week")
+    st.caption("A delay is a timeliness penalty (\u22125 to whoever missed the deadline). "
+               "It is tracked separately from quality errors.")
+    dl = logic.delays_by_person(wk_df)
+    if dl.empty:
+        st.success("On time \u2014 no delays recorded this week!")
+    else:
+        dl = dl.sort_values("delays", ascending=False)
+        fig = px.bar(dl, x="name", y="delays", text="delays",
+                     labels={"name": "", "delays": "Delays"})
+        fig.update_traces(textposition="outside", cliponaxis=False,
+                          marker_color=BUCKET_COLOR["Delay"])
+        fig.update_layout(showlegend=False, yaxis_title="Delays")
+        show(style_fig(fig, 300, legend=False))
 
 
 # ============================================================= FAIR (shared)
@@ -1021,7 +1038,7 @@ def page_error():
 
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**Bucket distribution**")
+        st.markdown("**Review outcomes** (incl. delays)")
         bd = logic.bucket_distribution(fdf)
         bd = bd[bd["count"] > 0]                      # never plot empty slices
         fig = px.pie(bd, names="Bucket", values="count", hole=0.5,

@@ -23,11 +23,15 @@ BAND_META = {
     "Peer 1": {"color": "#C8AA6E", "emoji": "\U0001F50D"},
     "Peer 2": {"color": "#4CC9B0", "emoji": "\U0001F3AF"},
 }
-BUCKETS = ["No Error", "Minor Error", "Major Error", "Brief Interpretation Error"]
+BUCKETS = ["No Error", "Minor Error", "Major Error", "Brief Interpretation Error", "Delay"]
 BUCKET_COLOR = {
     "No Error": "#4CC9B0", "Minor Error": "#F4CE00",
     "Major Error": "#E8734A", "Brief Interpretation Error": "#B57BE0",
+    "Delay": "#7D8CA3",
 }
+# Quality errors (a peer catches a mistake). Delays are timeliness penalties, tracked
+# separately so they never inflate the "errors caught / errors made" metrics.
+ERROR_BUCKETS = ["Minor Error", "Major Error", "Brief Interpretation Error"]
 _CANON_BUCKET = {b.lower(): b for b in BUCKETS}
 
 # Playbook scoring grid: (event / bucket, Owner, Peer 1, Peer 2).
@@ -124,7 +128,8 @@ def load_and_prepare(path: str) -> pd.DataFrame:
     df["week_start"] = week_start
     df["week_label"] = "W/C " + week_start.dt.strftime("%d %b %Y")
 
-    df["has_error"] = df["Bucket"].ne("No Error")
+    df["has_error"] = df["Bucket"].isin(ERROR_BUCKETS)   # quality errors only (not delays)
+    df["has_delay"] = df["Bucket"].eq("Delay")
     df["total_points"] = df[list(POINT_COL.values())].sum(axis=1)
     return df.sort_values("Date").reset_index(drop=True)
 
@@ -339,6 +344,31 @@ def band_moments(lb: pd.DataFrame) -> pd.DataFrame:
 def weekly_errors_by_owner(df_week: pd.DataFrame) -> pd.DataFrame:
     """Errors made this week, attributed to the owner of the deliverable."""
     return owner_errors(df_week).rename(columns={"Owner": "name"})
+
+
+def count_delays(df) -> int:
+    return int(df["has_delay"].sum()) if "has_delay" in df.columns else 0
+
+
+def delays_by_person(df) -> pd.DataFrame:
+    """Delays attributed to whoever carried the penalty (the most-negative points cell)."""
+    if "has_delay" not in df.columns:
+        return pd.DataFrame(columns=["POD", "name", "delays"])
+    d = df[df["has_delay"]]
+    if d.empty:
+        return pd.DataFrame(columns=["POD", "name", "delays"])
+    rows = []
+    for _, r in d.iterrows():
+        cand = [(r["Owner"], r["Owner Points"]), (r["Peer 1"], r["Peer 1 Points"]),
+                (r["Peer 2"], r["Peer 2 Points"])]
+        cand = [(n, p) for (n, p) in cand if pd.notna(n)]
+        pen = min(cand, key=lambda c: c[1]) if cand else (None, 0)
+        if pen[0] is not None:
+            rows.append({"POD": r["POD"], "name": pen[0]})
+    if not rows:
+        return pd.DataFrame(columns=["POD", "name", "delays"])
+    return (pd.DataFrame(rows).groupby(["POD", "name"]).size()
+            .reset_index(name="delays").sort_values("delays", ascending=False))
 
 
 # ---- Participant analytics ---------------------------------------------------

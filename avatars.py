@@ -41,9 +41,14 @@ ARCH_NAME = {
     "paladin": ("Paladin", "Templar"),
     "captain": ("Captain", "Skipper"),
     "astro":   ("Astronaut", "Astronaut"),
+    # Special hand-assigned hero avatars (not part of the random rotation).
+    "spiderman":       ("Spider-Man", "Spider-Woman"),
+    "captain_america": ("Captain America", "Captain America"),
+    "punisher":        ("Punisher", "Punisher"),
 }
 ARCHES = list(ARCH_NAME.keys())
-COVERING = {"ninja", "robot", "pharaoh", "astro"}
+SPECIAL = {"spiderman", "captain_america", "punisher"}
+COVERING = {"ninja", "robot", "pharaoh", "astro", "spiderman", "punisher"}
 
 SKIN = ["#F1C27D", "#FFD9A8", "#E0AC69", "#C68642", "#8D5524"]
 HAIR = [(58, 40, 30), (30, 30, 36), (188, 146, 66), (150, 60, 40), (96, 64, 44)]
@@ -51,7 +56,8 @@ TRIM = ["#F5D76E", "#FFFFFF", "#2D2D3A", "#8ECAE6", "#FFB703", "#FF6B6B"]
 
 
 def list_archetypes():
-    return list(ARCHES)
+    """Pool used for random assignment — excludes the special hand-assigned heroes."""
+    return [a for a in ARCHES if a not in SPECIAL]
 
 
 def archetype_display(key, gender):
@@ -196,6 +202,43 @@ def _draw(archetype, gender, seed):
         _px(d, 5, 4, 10, 4, (150, 200, 240, 255))                 # visor glint
         img.putpixel((4, 2), trim); img.putpixel((11, 2), trim)
         _px(d, 6, 9, 9, 9, trim)                                  # chest control panel
+    elif arch == "spiderman":
+        RED, BLUE, WEB = (206, 32, 41, 255), (36, 58, 150, 255), (12, 12, 20, 255)
+        _px(d, 5, 2, 10, 7, RED)                                  # red mask
+        img.putpixel((5, 2), (0, 0, 0, 0)); img.putpixel((10, 2), (0, 0, 0, 0))
+        _px(d, 5, 4, 6, 5, (245, 245, 245, 255)); _px(d, 9, 4, 10, 5, (245, 245, 245, 255))  # eyes
+        img.putpixel((6, 3), WEB); img.putpixel((9, 3), WEB); img.putpixel((7, 6), WEB)
+        img.putpixel((5, 6), WEB); img.putpixel((10, 6), WEB)    # web lines on mask
+        _px(d, 4, 8, 11, 11, RED)                                 # red torso
+        _px(d, 5, 12, 10, 15, BLUE)                               # blue legs
+        _px(d, 3, 8, 3, 12, RED); _px(d, 12, 8, 12, 12, RED)     # red arms
+        for wx, wy in [(6, 9), (8, 10), (5, 10), (9, 9), (7, 11)]:
+            img.putpixel((wx, wy), WEB)                           # torso web
+        _px(d, 7, 9, 8, 9, WEB)                                   # spider emblem
+    elif arch == "captain_america":
+        BLUE, RED, WHT = (36, 66, 150, 255), (200, 40, 46, 255), (245, 245, 245, 255)
+        _px(d, 4, 1, 11, 2, BLUE); _px(d, 4, 2, 4, 4, BLUE); _px(d, 11, 2, 11, 4, BLUE)  # cowl
+        img.putpixel((3, 2), WHT); img.putpixel((12, 2), WHT)    # little wings
+        img.putpixel((7, 1), WHT); img.putpixel((8, 1), WHT)     # "A"
+        _px(d, 6, 4, 6, 5, (30, 30, 46, 255)); _px(d, 9, 4, 9, 5, (30, 30, 46, 255))
+        _px(d, 4, 8, 11, 11, BLUE)                                # blue torso
+        _px(d, 7, 9, 8, 9, WHT)                                   # chest star
+        _px(d, 4, 12, 11, 12, RED); _px(d, 4, 13, 11, 13, WHT)   # belly stripes
+        _px(d, 4, 14, 11, 15, RED)
+        _px(d, 1, 9, 3, 11, RED)                                  # shield
+        _px(d, 2, 10, 2, 10, WHT); img.putpixel((2, 10), (60, 120, 220, 255))
+    elif arch == "punisher":
+        BLK, WHT = (24, 24, 28, 255), (238, 238, 240, 255)
+        _px(d, 5, 2, 10, 2, BLK)                                  # dark hair
+        _px(d, 5, 5, 10, 7, _scale(skin, 0.5))                    # beard
+        _px(d, 6, 4, 6, 4, (30, 30, 40, 255)); _px(d, 9, 4, 9, 4, (30, 30, 40, 255))
+        _px(d, 4, 8, 11, 15, BLK)                                 # black tactical suit
+        _px(d, 3, 8, 3, 12, BLK); _px(d, 12, 8, 12, 12, BLK)     # arms
+        _px(d, 5, 8, 10, 9, WHT)                                  # skull dome
+        img.putpixel((6, 9), BLK); img.putpixel((9, 9), BLK)     # eye sockets
+        _px(d, 6, 10, 9, 10, WHT)                                 # skull jaw
+        img.putpixel((6, 11), WHT); img.putpixel((8, 11), WHT); img.putpixel((10, 11), WHT)  # teeth
+        img.putpixel((4, 10), (90, 96, 104, 255)); img.putpixel((11, 10), (90, 96, 104, 255))  # gun grips
     return img
 
 
